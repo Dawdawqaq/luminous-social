@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: luminous-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: luminous
+      MYSQL_USER: luminous
+      MYSQL_PASSWORD: luminous_password
+      MYSQL_ROOT_PASSWORD: luminous_root_password
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - luminous_mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+
+volumes:
+  luminous_mysql_data:

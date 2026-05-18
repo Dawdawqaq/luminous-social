@@ -1,0 +1,49 @@
+# ==========================================
+# Luminous - 工业级 Git 屏蔽防线 (.gitignore)
+# ==========================================
+
+# --- [临时运行脚本硬守卫] ---
+_Run_*.java
+_Run_*.class
+agent.md
+
+# --- [前端开发隔离] ---
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/coverage/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+
+# --- [后端 Maven 与 JVM 隔离] ---
+backend/target/
+backend/*.log
+backend/uploads/
+backend/src/main/resources/db/migration/*.class
+
+# --- [用户上传的本地静态图库目录] ---
+uploads/
+
+# --- [主流开发工具 IDE 隔离] ---
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+.metadata/
+
+# --- [系统垃圾文件] ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
