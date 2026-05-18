@@ -61,7 +61,7 @@
 2.  **配置数据库连接指向 (可选)**：
     后端的 `application.yml` 默认数据库连接地址设置为 `${DB_HOST:192.168.132.130}`，默认账号密码为 `root` / `root`。
     **如果您的本地 MySQL 运行在 `localhost` 上**，您可以选择以下任一方式让后端顺畅连上本地库：
-    *   **方式 A (零代码侵入 - 推荐)**：在您的 PC 上配置系统环境变量（或在 IDEA 启动配置中增加 Environment Variables）：
+    *   **方式 A (零代码侵入 - 用方式B)**：在您的 PC 上配置系统环境变量（或在 IDEA 启动配置中增加 Environment Variables）：
         ```bash
         DB_HOST=localhost
         DB_PORT=3306
