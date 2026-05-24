@@ -1,9 +1,8 @@
 # Luminous - 现代社区探索大厅 (Premium Full-Stack Platform)
 
-> **Luminous** 是一款将**极致极简拟物（Glassmorphism）美学与现代化高能全栈架构**完美结合的社区发现与社交分享平台。
+> **Luminous** 是一款社区发现与社交分享平台。
 > 项目目前已完成 **Java 21 / Spring Boot 3 后端** 与 **React 18 / Vite 前端** 的全链路深度贯通，实现了零门槛的物理磁盘静态图片托管与 Flyway 数据库全自动演进。
->
-> **本项目专为 GitHub 仓库交付打造**：[Dawdawqaq/Luminous-byzx](https://github.com/Dawdawqaq/Luminous-byzx.git)
+
 
 ---
 
@@ -37,9 +36,15 @@
 
 ---
 
+<<<<<<< HEAD
 ##  快速本地从 0 搭建与拉起指南 
 
 >  **项目采用全自动 Flyway 迁移架构，别的 PC 从零搭建时，完全不需要您手动运行繁重的 SQL 脚本来建表！您只需在本地创建一个空的 MySQL 数据库并配置好连接，后端拉起时会自动接管一切建表与初始数据**
+=======
+##  快速本地从 0 搭建与拉起指南 (协作 PC 必读)
+
+>  **项目采用全自动 Flyway 迁移架构，别的 PC 从零搭建时，完全不需要您手动运行繁重的 SQL 脚本来建表！您只需在本地创建一个空的 MySQL 数据库并配置好连接，后端拉起时会自动接管一切建表与初始数据灌入！**
+>>>>>>> ce170dc5db2402fc0372571c76795905e0ba0e87
 
 ###  前提条件
 在开始搭建前，请确保您的 PC 环境已配妥以下基础链：
@@ -62,8 +67,18 @@
 2.  **配置数据库连接指向**：
     后端的 `application.yml` 默认数据库连接地址设置为 `${DB_HOST:192.168.132.130}`，默认账号密码为 `root` / `root`。
     **如果您的本地 MySQL 运行在 `localhost` 上**，您可以选择以下任一方式让后端顺畅连上本地库：
+<<<<<<< HEAD
     
     *   **方式-直接改配置**：打开 [backend/src/main/resources/application.yml](file:///d:/javaProjects/luminous/backend/src/main/resources/application.yml#L7-L14) 文件，直接将默认 the IP `192.168.132.130` 修改为您的本地 IP（如 `localhost` 或 `127.0.0.1`），并将 username 和 password 修正为您的本地 root 账号及密码。
+=======
+    *   **方式 A (零代码侵入 - 用方式B)**：在您的 PC 上配置系统环境变量（或在 IDEA 启动配置中增加 Environment Variables）：
+        ```bash
+        DB_HOST=localhost
+        DB_PORT=3306
+        DB_NAME=luminous
+        ```
+    *   **方式 B (直接改配置)**：打开 [backend/src/main/resources/application.yml](file:///d:/javaProjects/luminous/backend/src/main/resources/application.yml#L7-L14) 文件，直接将默认 the IP `192.168.132.130` 修改为您的本地 IP（如 `localhost` 或 `127.0.0.1`），并将 username 和 password 修正为您的本地 root 账号及密码。
+>>>>>>> ce170dc5db2402fc0372571c76795905e0ba0e87
 
 ---
 
