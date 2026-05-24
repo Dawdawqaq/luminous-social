@@ -8,6 +8,7 @@ import { PostDetailView } from './views/PostDetailView';
 import { CommunitiesView } from './views/CommunitiesView';
 import { UserProfileView } from './views/UserProfileView';
 import { SearchView } from './views/SearchView';
+import { AdminView } from './views/AdminView';
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/user/:username" element={<UserProfileView />} />
           <Route path="/bookmarks" element={<BookmarkView />} />
           <Route path="/search" element={<SearchView />} />
+          <Route path="/admin" element={<AdminView />} />
         </Routes>
       </Layout>
     </Router>

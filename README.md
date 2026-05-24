@@ -37,11 +37,11 @@
 
 ---
 
-## ⚙️ 快速本地从 0 搭建与拉起指南 (协作 PC 必读)
+##  快速本地从 0 搭建与拉起指南 
 
-> 💡 **项目采用全自动 Flyway 迁移架构，别的 PC 从零搭建时，完全不需要您手动运行繁重的 SQL 脚本来建表！您只需在本地创建一个空的 MySQL 数据库并配置好连接，后端拉起时会自动接管一切建表与初始数据灌入！**
+>  **项目采用全自动 Flyway 迁移架构，别的 PC 从零搭建时，完全不需要您手动运行繁重的 SQL 脚本来建表！您只需在本地创建一个空的 MySQL 数据库并配置好连接，后端拉起时会自动接管一切建表与初始数据**
 
-### 📌 前提条件
+###  前提条件
 在开始搭建前，请确保您的 PC 环境已配妥以下基础链：
 *   **JDK 21** (已配置环境变量 `JAVA_HOME`)
 *   **Maven 3.9.x+**
@@ -50,7 +50,7 @@
 
 ---
 
-### 📂 第一步：初始化 MySQL 数据库与配置
+###  第一步：初始化 MySQL 数据库与配置
 
 1.  **在您的本地 MySQL 中，创建一个干净的空数据库**：
     您可以使用命令行、Navicat 或 DataGrip 连上您的本地 MySQL，然后执行以下 SQL：
@@ -59,20 +59,15 @@
     ```
     *(注：只需建一个空库即可，千万不要手动导入任何 SQL 文件！)*
 
-2.  **配置数据库连接指向 (可选)**：
+2.  **配置数据库连接指向**：
     后端的 `application.yml` 默认数据库连接地址设置为 `${DB_HOST:192.168.132.130}`，默认账号密码为 `root` / `root`。
     **如果您的本地 MySQL 运行在 `localhost` 上**，您可以选择以下任一方式让后端顺畅连上本地库：
-    *   **方式 A (零代码侵入 - 推荐)**：在您的 PC 上配置系统环境变量（或在 IDEA 启动配置中增加 Environment Variables）：
-        ```bash
-        DB_HOST=localhost
-        DB_PORT=3306
-        DB_NAME=luminous
-        ```
-    *   **方式 B (直接改配置)**：打开 [backend/src/main/resources/application.yml](file:///d:/javaProjects/luminous/backend/src/main/resources/application.yml#L7-L14) 文件，直接将默认 the IP `192.168.132.130` 修改为您的本地 IP（如 `localhost` 或 `127.0.0.1`），并将 username 和 password 修正为您的本地 root 账号及密码。
+    
+    *   **方式-直接改配置**：打开 [backend/src/main/resources/application.yml](file:///d:/javaProjects/luminous/backend/src/main/resources/application.yml#L7-L14) 文件，直接将默认 the IP `192.168.132.130` 修改为您的本地 IP（如 `localhost` 或 `127.0.0.1`），并将 username 和 password 修正为您的本地 root 账号及密码。
 
 ---
 
-### 📂 第二步：编译并启动后端服务 (Backend)
+###  第二步：编译并启动后端服务 (Backend)
 
 1.  **进入后端子项目目录**：
     ```bash
@@ -92,7 +87,7 @@
 
 ---
 
-### 💻 第三步：拉起前端页面 (Frontend)
+###  第三步：拉起前端页面 (Frontend)
 
 1.  **打开全新的终端，进入前端子项目目录**：
     ```bash
@@ -111,7 +106,7 @@
 
 ---
 
-## 🔐 默认测试账号 (Default Seed Users)
+##  默认测试账号 (Default Seed Users)
 
 启动项目后，您可以直接使用以下预设的测试用户登录体验，也可自行注册检测功能：
 
@@ -124,7 +119,7 @@
 
 ---
 
-## 📮 GitHub 仓库提交与推送速查
+##  GitHub 仓库提交与推送速查
 
 如果您是本项目的合作开发者，将本地修改推送至 GitHub 仓库的方法如下：
 

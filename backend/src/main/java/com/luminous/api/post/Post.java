@@ -16,6 +16,7 @@ public class Post {
     private Integer votes;
     private Integer commentsCount;
     private Boolean isPublic;
+    private String status;  // PUBLISHED | BANNED
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -97,6 +98,14 @@ public class Post {
 
     public void setIsPublic(Boolean isPublic) {
         this.isPublic = isPublic;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 
     public LocalDateTime getCreatedAt() {

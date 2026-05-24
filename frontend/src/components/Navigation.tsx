@@ -14,6 +14,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isOpen, onClose, onToggle, onPostClick, onCreateCommunityClick }: SidebarProps) {
+  const { user } = useAuth();
+  
   const navItems = [
     { name: '首页', icon: Home, path: '/' },
     { name: '热门', icon: TrendingUp, path: '/trending' },
@@ -22,6 +24,10 @@ export function Sidebar({ isOpen, onClose, onToggle, onPostClick, onCreateCommun
     { name: '收藏', icon: Star, path: '/bookmarks' },
     { name: '个人资料', icon: Settings, path: '/settings' },
   ];
+
+  if (user && user.role === 'ADMIN') {
+    navItems.push({ name: '全局控制台', icon: ShieldCheck, path: '/admin' });
+  }
 
   return (
     <>

@@ -1,4 +1,4 @@
-import { ThumbsUp, ThumbsDown, MessageCircle, Share2, MoreVertical, Smartphone, Brain, User as UserIcon, Bookmark } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, MessageCircle, Share2, MoreVertical, Smartphone, Brain, User as UserIcon, Bookmark, Trash2 } from 'lucide-react';
 import { Post } from '../types';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
@@ -16,15 +16,35 @@ export function PostCard({ post }: PostCardProps) {
   const { user } = useAuth();
   const [currentPost, setCurrentPost] = useState(post);
   const [isBookmarked, setIsBookmarked] = useState(Boolean(post.bookmarked));
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false);
   const isAltIcon = currentPost.community.name.includes('Futurism') || currentPost.community.name.includes('pixel8');
 
-  // Map community name to path
   const communitySlug = currentPost.community.name.replace(/^c\//, '');
   const communityPath = `/community/${communitySlug}`;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   useEffect(() => {
     setCurrentPost(post);
     setIsBookmarked(Boolean(post.bookmarked));
   }, [post]);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    try {
+      await api.deletePost(currentPost.id);
+      setIsDeleted(true);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '删除失败');
+      setConfirmDelete(false);
+    }
+  };
+
   const vote = async (value: -1 | 1) => {
     if (!user) {
       window.dispatchEvent(new CustomEvent('auth:required', {
@@ -48,6 +68,8 @@ export function PostCard({ post }: PostCardProps) {
     setCurrentPost(updated);
     setIsBookmarked(Boolean(updated.bookmarked));
   };
+
+  if (isDeleted) return null;
 
   return (
     <motion.article 
@@ -79,9 +101,21 @@ export function PostCard({ post }: PostCardProps) {
             <p className="text-xs text-on-surface-variant font-medium">{currentPost.timestamp}</p>
           </div>
         </div>
-        <button className="text-on-surface-variant hover:text-on-surface">
-          <MoreVertical size={20} />
-        </button>
+        <div className="relative">
+          <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-on-surface-variant hover:text-on-surface p-1 rounded-full hover:bg-surface-variant transition-colors">
+            <MoreVertical size={20} />
+          </button>
+          {isMenuOpen && user && user.username === currentPost.author.username && (
+            <div className="absolute right-0 top-full mt-1 w-36 bg-surface-container-high rounded-xl shadow-lg border border-outline-variant/30 overflow-hidden z-10">
+              <button 
+                onClick={handleDelete}
+                className="w-full px-4 py-2.5 text-left text-sm font-bold text-error hover:bg-error/10 flex items-center gap-2 transition-colors"
+              >
+                <Trash2 size={16} /> {confirmDelete ? '确认删除?' : '删除帖子'}
+              </button>
+            </div>
+          )}
+        </div>
       </header>
       
       <Link to={`/post/${currentPost.id}`} className="block group/content">

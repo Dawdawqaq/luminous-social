@@ -24,11 +24,12 @@ public class JwtService {
         this.expirationMinutes = expirationMinutes;
     }
 
-    public String createToken(Long userId, String username) {
+    public String createToken(Long userId, String username, String role) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
+                .claim("role", role == null ? "USER" : role)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(expirationMinutes * 60)))
                 .signWith(secretKey)
@@ -41,6 +42,11 @@ public class JwtService {
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
-        return new CurrentUser(Long.valueOf(claims.getSubject()), claims.get("username", String.class));
+        String role = claims.get("role", String.class);
+        return new CurrentUser(
+                Long.valueOf(claims.getSubject()),
+                claims.get("username", String.class),
+                role == null ? "USER" : role
+        );
     }
 }

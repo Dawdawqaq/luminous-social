@@ -14,6 +14,8 @@ public class User {
     private String bannerUrl;
     private String bio;
     private String joinDate;
+    private String role;       // USER | ADMIN
+    private Boolean isBanned;  // 0=正常 1=封禁
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -79,6 +81,22 @@ public class User {
 
     public void setJoinDate(String joinDate) {
         this.joinDate = joinDate;
+    }
+
+    public String getRole() {
+        return role;
+    }
+
+    public void setRole(String role) {
+        this.role = role;
+    }
+
+    public Boolean getIsBanned() {
+        return isBanned;
+    }
+
+    public void setIsBanned(Boolean isBanned) {
+        this.isBanned = isBanned;
     }
 
     public LocalDateTime getCreatedAt() {

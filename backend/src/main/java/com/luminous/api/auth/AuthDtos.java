@@ -47,7 +47,9 @@ public final class AuthDtos {
             String bio,
             Stats stats,
             String joinDate,
-            Boolean isFollowing
+            Boolean isFollowing,
+            String role,
+            Boolean isBanned
     ) {
     }
 

@@ -27,10 +27,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (header != null && header.startsWith("Bearer ")) {
             try {
                 CurrentUser currentUser = jwtService.parse(header.substring(7));
+                String authority = "ADMIN".equals(currentUser.role()) ? "ADMIN" : "USER";
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         currentUser,
                         null,
-                        AuthorityUtils.createAuthorityList("ROLE_USER")
+                        AuthorityUtils.createAuthorityList(authority)
                 );
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (RuntimeException ignored) {

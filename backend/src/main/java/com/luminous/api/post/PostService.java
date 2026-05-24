@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.luminous.api.auth.User;
 import com.luminous.api.auth.UserMapper;
 import com.luminous.api.common.BusinessException;
@@ -85,6 +86,7 @@ public class PostService {
         post.setVotes(0);
         post.setCommentsCount(0);
         post.setIsPublic(request.isPublic());
+        post.setStatus("PUBLISHED");
         post.setCreatedAt(java.time.LocalDateTime.now());
         postMapper.insert(post);
         return toDto(post, currentUser);
@@ -230,6 +232,37 @@ public class PostService {
                 .map(post -> toDto(post, currentUser))
                 .toList();
         return new PageResponse<>(items, page, size, postIds.size(), to < postIds.size());
+    }
+
+    @Transactional
+    public void deletePost(Long postId, CurrentUser currentUser) {
+        if (currentUser == null) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "您需要先登录才能执行此操作");
+        }
+        Post post = requirePost(postId);
+        if (!post.getAuthorId().equals(currentUser.id())) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "您只能删除自己发布的帖子");
+        }
+        // 级联删除由 DB 外键处理（comments、post_votes、bookmarks）
+        postMapper.deleteById(postId);
+    }
+
+    @Transactional
+    public void deleteComment(Long commentId, CurrentUser currentUser) {
+        if (currentUser == null) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "您需要先登录才能执行此操作");
+        }
+        Comment comment = requireComment(commentId);
+        if (!comment.getAuthorId().equals(currentUser.id())) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "您只能删除自己发布的评论");
+        }
+        commentMapper.deleteById(commentId);
+        // 同步递减帖子评论计数
+        Post post = postMapper.selectById(comment.getPostId());
+        if (post != null) {
+            post.setCommentsCount(Math.max(0, post.getCommentsCount() - 1));
+            postMapper.updateById(post);
+        }
     }
 
     private Post requirePost(Long id) {

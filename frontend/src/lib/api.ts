@@ -47,12 +47,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const body = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
   if (!response.ok || !body?.success) {
     if (response.status === 401 || response.status === 403 || body?.error?.code === 'UNAUTHORIZED' || body?.error?.message?.includes('未登录')) {
-      if (path !== '/auth/me') {
+      if (path !== '/auth/me' && path !== '/auth/login' && path !== '/auth/register') {
         window.dispatchEvent(new CustomEvent('auth:required'));
       }
-      throw new Error('请先登录以继续操作');
+      if (path === '/auth/login' || path === '/auth/register') {
+        const err = new Error(body?.error?.message ?? '账号或密码错误');
+        (err as any).status = response.status;
+        throw err;
+      }
+      const err = new Error('请先登录以继续操作');
+      (err as any).status = response.status;
+      throw err;
     }
-    throw new Error(body?.error?.message ?? '请求失败');
+    const err = new Error(body?.error?.message ?? '请求失败');
+    (err as any).status = response.status;
+    throw err;
   }
   return body.data;
 }
@@ -101,5 +110,16 @@ export const api = {
   },
   followUser: (username: string) => request<User>(`/users/${username}/follow`, { method: 'POST' }),
   unfollowUser: (username: string) => request<User>(`/users/${username}/follow`, { method: 'DELETE' }),
-  searchUsers: (search?: string) => request<User[]>(search ? `/users?search=${encodeURIComponent(search)}` : '/users')
+  searchUsers: (search?: string) => request<User[]>(search ? `/users?search=${encodeURIComponent(search)}` : '/users'),
+  deletePost: (id: string) => fetch(
+    `${API_BASE_URL}/posts/${id}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${authToken}` } }
+  ).then(r => { if (!r.ok && r.status !== 204) throw new Error('删除失败'); }),
+  deleteComment: (id: string) => fetch(
+    `${API_BASE_URL}/comments/${id}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${authToken}` } }
+  ).then(r => { if (!r.ok && r.status !== 204) throw new Error('删除失败'); }),
+  adminListUsers: () => request<any[]>('/admin/users'),
+  adminBanUser: (username: string) => request<User>(`/admin/users/${username}/ban`, { method: 'POST' }),
+  adminUnbanUser: (username: string) => request<User>(`/admin/users/${username}/ban`, { method: 'DELETE' }),
 };

@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { 
   ThumbsUp, 
   ThumbsDown, 
@@ -10,7 +10,8 @@ import {
   Brain,
   Send,
   Bookmark,
-  Sparkles
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -22,12 +23,14 @@ import { useAuth } from '../auth/AuthContext';
 export function PostDetailView() {
   const { id } = useParams();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [post, setPost] = useState<Post | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentText, setCommentText] = useState('');
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [deletingPost, setDeletingPost] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -108,6 +111,29 @@ export function PostDetailView() {
     setComments(comments.map(c => c.id === commentId ? updated : c));
   };
 
+  const handleDeletePost = async () => {
+    if (!post || !window.confirm('确定要删除这篇帖子吗？此操作不可撤销。')) return;
+    setDeletingPost(true);
+    try {
+      await api.deletePost(post.id);
+      navigate(-1);
+    } catch (e) {
+      setDeletingPost(false);
+      alert(e instanceof Error ? e.message : '删除失败，请重试');
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!window.confirm('确定要删除这条评论吗？')) return;
+    try {
+      await api.deleteComment(commentId);
+      setComments(prev => prev.filter(c => c.id !== commentId));
+      if (post) setPost({ ...post, comments: Math.max(0, post.comments - 1) });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '删除失败，请重试');
+    }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -150,9 +176,24 @@ export function PostDetailView() {
               </p>
             </div>
           </div>
-          <button className="p-2 hover:bg-surface-variant rounded-full transition-colors text-on-surface-variant">
-            <MoreVertical size={24} />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* 作者专属删除按钮 */}
+            {user && post.author.username === user.username && (
+              <button
+                id="delete-post-btn"
+                onClick={handleDeletePost}
+                disabled={deletingPost}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                title="删除帖子"
+              >
+                <Trash2 size={15} />
+                <span>{deletingPost ? '删除中...' : '删除'}</span>
+              </button>
+            )}
+            <button className="p-2 hover:bg-surface-variant rounded-full transition-colors text-on-surface-variant">
+              <MoreVertical size={24} />
+            </button>
+          </div>
         </header>
 
         <div className="mb-8">
@@ -318,6 +359,18 @@ export function PostDetailView() {
                     >
                       回复
                     </button>
+                    {/* 评论作者专属删除按钮 */}
+                    {user && comment.author.username === user.username && (
+                      <button
+                        id={`delete-comment-btn-${comment.id}`}
+                        onClick={() => handleDeleteComment(comment.id)}
+                        className="ml-auto flex items-center gap-1 text-xs font-bold text-red-400 hover:text-red-600 transition-colors"
+                        title="删除评论"
+                      >
+                        <Trash2 size={13} />
+                        <span>删除</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

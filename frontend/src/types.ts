@@ -12,6 +12,8 @@ export interface User {
   };
   joinDate: string;
   isFollowing?: boolean;
+  role?: string;
+  isBanned?: boolean;
 }
 
 export interface Community {
