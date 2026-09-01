@@ -1,13 +1,25 @@
 # ==========================================
-# Luminous - 工业级 Git 屏蔽防线 (.gitignore)
+# Luminous - 开源安全与开发隔离防线 (.gitignore)
 # ==========================================
 
-# --- [临时运行脚本硬守卫] ---
+# --- [内部研发/调试文档与 Agent 协作档案] ---
+doc/
+docs/
+AGENTS.md
+agent.md
+CLAUDE.md
+GEMINI.md
 _Run_*.java
 _Run_*.class
-agent.md
 
-# --- [前端开发隔离] ---
+# --- [敏感环境配置与密钥 (保留 .env.example 模板)] ---
+.env
+.env.dev
+.env.prod
+.env*.local
+!.env.example
+
+# --- [前端开发与构建隔离] ---
 frontend/node_modules/
 frontend/dist/
 frontend/build/
@@ -21,16 +33,17 @@ frontend/yarn-debug.log*
 frontend/yarn-error.log*
 frontend/pnpm-debug.log*
 
-# --- [后端 Maven 与 JVM 隔离] ---
+# --- [后端 Maven 与 JVM 构建隔离] ---
 backend/target/
 backend/*.log
 backend/uploads/
 backend/src/main/resources/db/migration/*.class
 
-# --- [用户上传的本地静态图库目录] ---
+# --- [用户上传的多媒体图库目录] ---
 uploads/
+uploads-test/
 
-# --- [主流开发工具 IDE 隔离] ---
+# --- [主流开发工具 IDE 配置隔离] ---
 .idea/
 *.iml
 *.iws
@@ -42,7 +55,7 @@ uploads/
 .factorypath
 .metadata/
 
-# --- [系统垃圾文件] ---
+# --- [系统临时与垃圾文件] ---
 .DS_Store
 Thumbs.db
 ehthumbs.db

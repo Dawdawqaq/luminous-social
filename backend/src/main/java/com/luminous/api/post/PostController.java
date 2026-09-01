@@ -34,11 +34,12 @@ public class PostController {
             @RequestParam(defaultValue = "hot") String filter,
             @RequestParam(required = false) String community,
             @RequestParam(required = false) String search,
+            @RequestParam(required = false) String author,
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "10") long size,
             @AuthenticationPrincipal CurrentUser currentUser
     ) {
-        return ApiResponse.ok(postService.list(filter, community, search, page, size, currentUser));
+        return ApiResponse.ok(postService.list(filter, community, search, author, page, size, currentUser));
     }
 
     @Operation(summary = "获取帖子详情")

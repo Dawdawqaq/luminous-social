@@ -6,8 +6,10 @@ import com.luminous.api.auth.AuthService;
 import com.luminous.api.auth.User;
 import com.luminous.api.auth.UserMapper;
 import com.luminous.api.common.BusinessException;
+import com.luminous.api.security.TokenBlacklistService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -16,15 +18,18 @@ public class AdminService {
 
     private final UserMapper userMapper;
     private final AuthService authService;
+    private final TokenBlacklistService tokenBlacklistService;
 
-    public AdminService(UserMapper userMapper, AuthService authService) {
+    public AdminService(UserMapper userMapper, AuthService authService, TokenBlacklistService tokenBlacklistService) {
         this.userMapper = userMapper;
         this.authService = authService;
+        this.tokenBlacklistService = tokenBlacklistService;
     }
 
     /**
      * 封禁指定用户
      */
+    @Transactional
     public AuthDtos.UserDto banUser(String username) {
         User user = requireByUsername(username);
         if ("ADMIN".equals(user.getRole())) {
@@ -32,16 +37,19 @@ public class AdminService {
         }
         user.setIsBanned(true);
         userMapper.updateById(user);
+        tokenBlacklistService.banUser(user.getId());
         return authService.toDto(user, null);
     }
 
     /**
      * 解封指定用户
      */
+    @Transactional
     public AuthDtos.UserDto unbanUser(String username) {
         User user = requireByUsername(username);
         user.setIsBanned(false);
         userMapper.updateById(user);
+        tokenBlacklistService.unbanUser(user.getId());
         return authService.toDto(user, null);
     }
 

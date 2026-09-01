@@ -26,7 +26,8 @@ public final class PostDtos {
             int comments,
             String type,
             boolean bookmarked,
-            int userVote
+            int userVote,
+            long viewCount
     ) {
     }
 
@@ -45,6 +46,7 @@ public final class PostDtos {
             @NotBlank @Size(max = 180) String title,
             @Size(max = 8000) String content,
             String image,
+            String type,
             boolean isPublic
     ) {
     }

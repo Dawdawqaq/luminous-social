@@ -21,16 +21,36 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ex.getStatus()).body(ApiResponse.fail(ex.getCode(), ex.getMessage()));
     }
 
-    @ExceptionHandler({MethodArgumentNotValidException.class, ConstraintViolationException.class})
-    public ResponseEntity<ApiResponse<Void>> handleValidation(Exception ex) {
-        log.warn("Validation error", ex);
-        return ResponseEntity.badRequest().body(ApiResponse.fail("VALIDATION_ERROR", "请求参数不合法"));
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodArgumentNotValid(MethodArgumentNotValidException ex) {
+        log.warn("Validation error on method arguments: {}", ex.getMessage());
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(err -> (err.getField() != null ? err.getField() + ": " : "") + err.getDefaultMessage())
+                .orElse("请求参数不合法");
+        return ResponseEntity.badRequest().body(ApiResponse.fail("VALIDATION_ERROR", message));
     }
 
-    @ExceptionHandler({AuthenticationException.class, AccessDeniedException.class})
-    public ResponseEntity<ApiResponse<Void>> handleSecurity(Exception ex) {
-        log.warn("Security error", ex);
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConstraintViolation(ConstraintViolationException ex) {
+        log.warn("Constraint violation error: {}", ex.getMessage());
+        String message = ex.getConstraintViolations().stream()
+                .findFirst()
+                .map(jakarta.validation.ConstraintViolation::getMessage)
+                .orElse("请求参数不合法");
+        return ResponseEntity.badRequest().body(ApiResponse.fail("VALIDATION_ERROR", message));
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAuthentication(AuthenticationException ex) {
+        log.warn("Authentication error: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.fail("UNAUTHORIZED", "请先登录"));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
+        log.warn("Access denied error: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.fail("FORBIDDEN", "无权限访问此资源"));
     }
 
     @ExceptionHandler(Exception.class)

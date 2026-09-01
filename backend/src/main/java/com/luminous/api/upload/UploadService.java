@@ -1,82 +1,70 @@
 package com.luminous.api.upload;
 
-import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.luminous.api.common.SnowflakeIdGenerator;
 import com.luminous.api.common.BusinessException;
 import com.luminous.api.security.CurrentUser;
+import com.luminous.api.storage.StorageProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Locale;
-import java.util.Set;
-
 @Service
 public class UploadService {
-    private static final Set<String> ALLOWED_TYPES = Set.of("image/jpeg", "image/png", "image/webp", "image/gif");
+    private static final Logger log = LoggerFactory.getLogger(UploadService.class);
 
     private final UploadedFileMapper uploadedFileMapper;
-    private final Path uploadDir;
+    private final StorageProvider storageProvider;
     private final String publicBaseUrl;
 
     public UploadService(
             UploadedFileMapper uploadedFileMapper,
-            @Value("${app.upload.dir}") String uploadDir,
+            StorageProvider storageProvider,
             @Value("${app.public-base-url}") String publicBaseUrl
     ) {
         this.uploadedFileMapper = uploadedFileMapper;
-        this.uploadDir = Path.of(uploadDir).toAbsolutePath().normalize();
+        this.storageProvider = storageProvider;
         this.publicBaseUrl = publicBaseUrl;
     }
 
     public UploadDtos.UploadResponse uploadImage(MultipartFile file, CurrentUser currentUser) {
-        if (file.isEmpty()) {
+        if (currentUser == null) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "您需要先登录才能上传文件");
+        }
+        if (file == null || file.isEmpty()) {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "EMPTY_FILE", "上传文件不能为空");
         }
-        String contentType = file.getContentType();
-        if (contentType == null || !ALLOWED_TYPES.contains(contentType.toLowerCase(Locale.ROOT))) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_FILE_TYPE", "仅支持 jpg、png、webp、gif 图片");
-        }
+
         try {
-            Files.createDirectories(uploadDir);
             String originalName = file.getOriginalFilename() == null ? "image" : file.getOriginalFilename();
-            String extension = extensionOf(originalName, contentType);
-            String storedName = IdWorker.getIdStr() + extension;
-            Path target = uploadDir.resolve(storedName).normalize();
-            if (!target.startsWith(uploadDir)) {
-                throw new BusinessException(HttpStatus.BAD_REQUEST, "BAD_FILE_NAME", "文件名不合法");
-            }
-            file.transferTo(target);
-            String url = publicBaseUrl + "/uploads/" + storedName;
+            String storedPathOrUrl = storageProvider.store(file);
+            String fullUrl = storedPathOrUrl.startsWith("http://") || storedPathOrUrl.startsWith("https://")
+                    ? storedPathOrUrl
+                    : publicBaseUrl + storedPathOrUrl;
+
+            String storedName = storedPathOrUrl.contains("/") 
+                    ? storedPathOrUrl.substring(storedPathOrUrl.lastIndexOf('/') + 1)
+                    : storedPathOrUrl;
+
             UploadedFile uploadedFile = new UploadedFile();
-            uploadedFile.setId(IdWorker.getId());
+            uploadedFile.setId(SnowflakeIdGenerator.getNextId());
             uploadedFile.setUserId(currentUser.id());
             uploadedFile.setOriginalName(originalName);
             uploadedFile.setStoredName(storedName);
-            uploadedFile.setUrl(url);
-            uploadedFile.setContentType(contentType);
+            uploadedFile.setUrl(fullUrl);
+            uploadedFile.setContentType(file.getContentType());
             uploadedFile.setSizeBytes(file.getSize());
             uploadedFileMapper.insert(uploadedFile);
-            return new UploadDtos.UploadResponse(String.valueOf(uploadedFile.getId()), url, originalName, file.getSize());
+
+            log.info("User {} uploaded file: {} -> {}", currentUser.username(), originalName, fullUrl);
+            return new UploadDtos.UploadResponse(String.valueOf(uploadedFile.getId()), fullUrl, originalName, file.getSize());
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {
+            log.error("Failed to process file upload for user: {}", currentUser.username(), ex);
             throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "UPLOAD_FAILED", "图片上传失败");
         }
-    }
-
-    private String extensionOf(String filename, String contentType) {
-        int dot = filename.lastIndexOf('.');
-        if (dot >= 0 && dot < filename.length() - 1) {
-            return filename.substring(dot).toLowerCase(Locale.ROOT);
-        }
-        return switch (contentType) {
-            case "image/png" -> ".png";
-            case "image/webp" -> ".webp";
-            case "image/gif" -> ".gif";
-            default -> ".jpg";
-        };
     }
 }
