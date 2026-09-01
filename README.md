@@ -71,8 +71,8 @@
 
 1. **克隆项目并配置环境变量**
    ```bash
-   git clone https://github.com/Dawdawqaq/luminous.git
-   cd luminous
+   git clone https://github.com/Dawdawqaq/luminous-social.git
+   cd luminous-social
    cp .env.example .env
    ```
 
@@ -129,7 +129,7 @@ http://localhost
 ## 📂 项目目录结构
 
 ```text
-luminous/
+luminous-social/
 ├── .env.example                    # [配置] 环境变量配置模板
 ├── docker-compose.yml              # [编排] 标准容器编排定义
 ├── docker-compose.prod.yml         # [编排] 生产负载均衡集群编排定义
