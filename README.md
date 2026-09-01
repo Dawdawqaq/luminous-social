@@ -71,7 +71,7 @@
 
 1. **克隆项目并配置环境变量**
    ```bash
-   git clone https://github.com/your-username/luminous.git
+   git clone https://github.com/Dawdawqaq/luminous.git
    cd luminous
    cp .env.example .env
    ```
