@@ -1,22 +1,22 @@
--- Atomic post vote operation in Redis
--- KEYS[1] = vote record key: "vote:post:{postId}:{userId}"
--- KEYS[2] = post vote count key: "stat:post:votes:{postId}" 
--- ARGV[1] = new vote value (-1, 0, or 1)
--- Returns: {oldValue, delta, newTotalVotes}
-
-local oldVal = tonumber(redis.call('GET', KEYS[1]) or '0') or 0
-local newVal = tonumber(ARGV[1])
-local delta = newVal - oldVal
-
-if newVal == 0 then
-    redis.call('DEL', KEYS[1])
-else
-    redis.call('SET', KEYS[1], tostring(newVal))
+-- 调用方持有数据库帖子行锁，快照包含最新接收水位及全部用户状态。
+-- Redis 缺失时由完整数据库快照恢复，不再将缺失键解释为零票。
+-- KEYS：用户状态哈希、帖子总分、接收版本；ARGV：总分、版本、用户与状态的成对列表。
+local changed = 0
+if redis.call('GET', KEYS[2]) ~= ARGV[1] or redis.call('GET', KEYS[3]) ~= ARGV[2] then
+    changed = 1
 end
-
-if delta ~= 0 then
-    redis.call('INCRBY', KEYS[2], delta)
+if redis.call('HLEN', KEYS[1]) ~= (#ARGV - 2) / 2 then
+    changed = 1
 end
-
-local totalVotes = tonumber(redis.call('GET', KEYS[2]) or '0') or 0
-return {oldVal, delta, totalVotes}
+for i = 3, #ARGV, 2 do
+    if redis.call('HGET', KEYS[1], ARGV[i]) ~= ARGV[i + 1] then
+        changed = 1
+    end
+end
+redis.call('DEL', KEYS[1])
+for i = 3, #ARGV, 2 do
+    redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+redis.call('SET', KEYS[2], ARGV[1])
+redis.call('SET', KEYS[3], ARGV[2])
+return changed

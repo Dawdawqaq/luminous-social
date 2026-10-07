@@ -7,18 +7,21 @@ import com.luminous.api.auth.User;
 import com.luminous.api.auth.UserMapper;
 import com.luminous.api.cache.CacheConstants;
 import com.luminous.api.cache.PostCacheService;
-import com.luminous.api.cache.RedisLuaScriptService;
+import com.luminous.api.cache.PostReadMetricsService;
 import com.luminous.api.cache.UserStatsCacheService;
 import com.luminous.api.common.BusinessException;
 import com.luminous.api.common.PageResponse;
+import com.luminous.api.common.PaginationPolicy;
 import com.luminous.api.common.SnowflakeIdGenerator;
 import com.luminous.api.common.TimeText;
 import com.luminous.api.community.Community;
 import com.luminous.api.community.CommunityService;
 import com.luminous.api.feed.FeedService;
 import com.luminous.api.mq.VoteMQProducer;
-import com.luminous.api.mq.VoteMessage;
 import com.luminous.api.security.CurrentUser;
+import com.luminous.api.vote.VoteCommandService;
+import com.luminous.api.vote.VoteProjectionService;
+import com.luminous.api.vote.VoteRepository;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
@@ -52,8 +55,11 @@ public class PostService {
     private final UserStatsCacheService userStatsCacheService;
     private final FeedService feedService;
     private final StringRedisTemplate stringRedisTemplate;
-    private final RedisLuaScriptService redisLuaScriptService;
     private final VoteMQProducer voteMQProducer;
+    private final VoteCommandService voteCommandService;
+    private final VoteProjectionService voteProjectionService;
+    private final VoteRepository voteRepository;
+    private final PostReadMetricsService readMetrics;
 
     public PostService(
             PostMapper postMapper,
@@ -69,8 +75,11 @@ public class PostService {
             UserStatsCacheService userStatsCacheService,
             @Lazy FeedService feedService,
             StringRedisTemplate stringRedisTemplate,
-            RedisLuaScriptService redisLuaScriptService,
-            VoteMQProducer voteMQProducer
+            VoteMQProducer voteMQProducer,
+            VoteCommandService voteCommandService,
+            VoteProjectionService voteProjectionService,
+            VoteRepository voteRepository,
+            PostReadMetricsService readMetrics
     ) {
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
@@ -85,8 +94,11 @@ public class PostService {
         this.userStatsCacheService = userStatsCacheService;
         this.feedService = feedService;
         this.stringRedisTemplate = stringRedisTemplate;
-        this.redisLuaScriptService = redisLuaScriptService;
         this.voteMQProducer = voteMQProducer;
+        this.voteCommandService = voteCommandService;
+        this.voteProjectionService = voteProjectionService;
+        this.voteRepository = voteRepository;
+        this.readMetrics = readMetrics;
     }
 
     public PageResponse<PostDtos.PostDto> list(String filter, String communitySlug, String search, long page, long size, CurrentUser currentUser) {
@@ -94,10 +106,7 @@ public class PostService {
     }
 
     public PageResponse<PostDtos.PostDto> list(String filter, String communitySlug, String search, String author, long page, long size, CurrentUser currentUser) {
-        // 深分页熔断保护：超过 500 条直接截断，杜绝深度 offset 导致的慢查询与临时表排序
-        if (page * size > 500) {
-            return new PageResponse<>(List.of(), page, size, 0, false);
-        }
+        long offset = PaginationPolicy.posts(page, size);
 
         LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>().eq(Post::getIsPublic, true);
         if (communitySlug != null && !communitySlug.isBlank()) {
@@ -122,43 +131,44 @@ public class PostService {
             wrapper.apply("MATCH(title, content) AGAINST({0} IN BOOLEAN MODE)", trimmed);
         }
         if ("new".equals(filter)) {
-            wrapper.orderByDesc(Post::getCreatedAt);
+            wrapper.orderByDesc(Post::getCreatedAt).orderByDesc(Post::getId);
         } else {
-            wrapper.orderByDesc(Post::getVotes).orderByDesc(Post::getCreatedAt);
+            wrapper.orderByDesc(Post::getVotes).orderByDesc(Post::getCreatedAt).orderByDesc(Post::getId);
         }
         IPage<Post> result = postMapper.selectPage(new Page<>(page, size), wrapper);
-        List<Post> records = result.getRecords();
+        List<Post> allRecords = result.getRecords();
+        int remaining = (int) (PaginationPolicy.POST_WINDOW - offset);
+        List<Post> records = allRecords.subList(0, Math.min(allRecords.size(), remaining));
+        long total = Math.min(result.getTotal(), PaginationPolicy.POST_WINDOW);
         if (records.isEmpty()) {
-            return new PageResponse<>(List.of(), result.getCurrent(), result.getSize(), result.getTotal(), false);
+            return new PageResponse<>(List.of(), page, size, total, false);
         }
 
         List<PostDtos.PostDto> items = assemblePostDtos(records, currentUser);
-        return new PageResponse<>(items, result.getCurrent(), result.getSize(), result.getTotal(), result.getCurrent() < result.getPages());
+        return new PageResponse<>(items, page, size, total, offset + items.size() < total);
     }
 
     public PostDtos.PostDto detail(Long id, CurrentUser currentUser) {
-        Post post = requirePost(id);
-        trackPostUV(id, currentUser);
+        Post post = requirePost(id, currentUser);
+        trackPostUV(id, currentUser, null);
         return toDto(post, currentUser);
     }
 
-    private void trackPostUV(Long postId, CurrentUser currentUser) {
+    public PostDtos.PostDto detail(Long id, CurrentUser currentUser, String anonymousId) {
+        Post post = requirePost(id, currentUser);
+        trackPostUV(id, currentUser, anonymousId);
+        return toDto(post, currentUser);
+    }
+
+    private void trackPostUV(Long postId, CurrentUser currentUser, String anonymousId) {
         String key = CacheConstants.POST_UV_KEY + postId;
-        String member = currentUser != null ? String.valueOf(currentUser.id()) : "anonymous-" + System.nanoTime();
+        // HLL 统计近似独立身份；没有稳定标识的内部调用不统计匿名 UV。
+        if (currentUser == null && anonymousId == null) { return; }
+        String member = currentUser != null ? "user:" + currentUser.id() : "anonymous:" + anonymousId;
         try {
             stringRedisTemplate.opsForHyperLogLog().add(key, member);
         } catch (Exception e) {
             log.warn("Failed to track UV for post {}", postId, e);
-        }
-    }
-
-    private long getPostUVCount(Long postId) {
-        try {
-            Long count = stringRedisTemplate.opsForHyperLogLog().size(CacheConstants.POST_UV_KEY + postId);
-            return count != null ? count : 0;
-        } catch (Exception e) {
-            log.warn("Failed to get UV count for post {}", postId, e);
-            return 0;
         }
     }
 
@@ -187,7 +197,9 @@ public class PostService {
         postCacheService.invalidatePost(post.getId());
 
         try {
-            feedService.fanOutToFollowers(currentUser.id(), post.getId());
+            if (Boolean.TRUE.equals(post.getIsPublic())) {
+                com.luminous.api.common.AfterCommit.run(() -> feedService.fanOutToFollowers(currentUser.id(), post.getId()));
+            }
         } catch (Exception e) {
             log.error("Failed to fan out post to followers for post {}", post.getId(), e);
         }
@@ -196,7 +208,7 @@ public class PostService {
     }
 
     public List<PostDtos.CommentDto> comments(Long postId, CurrentUser currentUser) {
-        requirePost(postId);
+        requirePost(postId, currentUser);
         List<Comment> comments = commentMapper.selectList(new LambdaQueryWrapper<Comment>()
                 .eq(Comment::getPostId, postId)
                 .orderByAsc(Comment::getCreatedAt));
@@ -244,7 +256,7 @@ public class PostService {
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "您需要先登录才能发表评论");
         }
-        requirePost(postId);
+        requirePost(postId, currentUser);
         Comment comment = new Comment();
         comment.setId(SnowflakeIdGenerator.getNextId());
         comment.setPostId(postId);
@@ -278,26 +290,20 @@ public class PostService {
             throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_VOTE", "投票分值无效");
         }
 
-        Post post = requirePost(postId);
+        Post post = requirePost(postId, currentUser);
 
-        List<Long> result = redisLuaScriptService.executeVoteScript(postId, currentUser.id(), value);
-        long oldVote = (result != null && !result.isEmpty()) ? result.get(0) : 0;
-        long newVote = (result != null && result.size() > 1) ? result.get(1) : value;
-        long totalVotes = (result != null && result.size() > 2) ? result.get(2) : post.getVotes() + (value - oldVote);
-
-        VoteMessage message = new VoteMessage(
-                postId,
-                currentUser.id(),
-                (int) newVote,
-                (int) (newVote - oldVote),
-                System.currentTimeMillis(),
-                UUID.randomUUID().toString()
-        );
-        voteMQProducer.sendVoteMessage(message);
+        VoteCommandService.Accepted accepted = voteCommandService.accept(postId, currentUser.id(), value);
+        // HTTP 幂等事务可能仍在执行，缓存和 MQ 发送必须等最外层业务事务提交。
+        com.luminous.api.common.AfterCommit.run(() -> {
+            try { voteProjectionService.refreshCommitted(postId); }
+            catch (Exception ex) { log.warn("投票已接收，缓存等待恢复，postId={}", postId, ex); }
+            voteMQProducer.sendVoteMessage(accepted.message());
+        });
+        int totalVotes = accepted.total();
 
         postCacheService.invalidatePost(postId);
 
-        post.setVotes((int) totalVotes);
+        post.setVotes(totalVotes);
 
         PostDtos.PostDto baseDto = toDto(post, currentUser);
         return new PostDtos.PostDto(
@@ -308,11 +314,11 @@ public class PostService {
                 baseDto.content(),
                 baseDto.image(),
                 baseDto.timestamp(),
-                (int) totalVotes,
+                totalVotes,
                 baseDto.comments(),
                 baseDto.type(),
                 baseDto.bookmarked(),
-                (int) newVote,
+                value,
                 baseDto.viewCount()
         );
     }
@@ -329,6 +335,8 @@ public class PostService {
         if (comment == null) {
             throw new BusinessException(HttpStatus.NOT_FOUND, "COMMENT_NOT_FOUND", "评论不存在");
         }
+
+        requirePost(comment.getPostId(), currentUser);
 
         CommentVote existing = commentVoteMapper.selectOne(new LambdaQueryWrapper<CommentVote>()
                 .eq(CommentVote::getCommentId, commentId)
@@ -375,7 +383,7 @@ public class PostService {
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         }
-        Post post = requirePost(postId);
+        Post post = requirePost(postId, currentUser);
         boolean exists = bookmarkMapper.exists(new LambdaQueryWrapper<Bookmark>()
                 .eq(Bookmark::getPostId, postId)
                 .eq(Bookmark::getUserId, currentUser.id()));
@@ -395,7 +403,7 @@ public class PostService {
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         }
-        Post post = requirePost(postId);
+        Post post = requirePost(postId, currentUser);
         bookmarkMapper.delete(new LambdaQueryWrapper<Bookmark>()
                 .eq(Bookmark::getPostId, postId)
                 .eq(Bookmark::getUserId, currentUser.id()));
@@ -403,6 +411,7 @@ public class PostService {
     }
 
     public PageResponse<PostDtos.PostDto> bookmarks(long page, long size, CurrentUser currentUser) {
+        PaginationPolicy.validate(page, size);
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         }
@@ -429,7 +438,7 @@ public class PostService {
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         }
-        Post post = requirePost(id);
+        Post post = requirePost(id, currentUser);
         boolean isAdmin = "ADMIN".equalsIgnoreCase(currentUser.role());
         if (!post.getAuthorId().equals(currentUser.id()) && !isAdmin) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "您无权删除该帖子");
@@ -452,6 +461,7 @@ public class PostService {
         if (comment == null) {
             throw new BusinessException(HttpStatus.NOT_FOUND, "COMMENT_NOT_FOUND", "评论不存在");
         }
+        requirePost(comment.getPostId(), currentUser);
         boolean isAdmin = "ADMIN".equalsIgnoreCase(currentUser.role());
         if (!comment.getAuthorId().equals(currentUser.id()) && !isAdmin) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "您无权删除该评论");
@@ -462,16 +472,23 @@ public class PostService {
         postCacheService.invalidatePost(comment.getPostId());
     }
 
-    public Post requirePost(Long id) {
+    public Post requirePost(Long id, CurrentUser currentUser) {
         Post post = postCacheService.queryWithPassThrough(id);
         if (post == null) {
             throw new BusinessException(HttpStatus.NOT_FOUND, "POST_NOT_FOUND", "帖子不存在");
         }
+        PostAccessPolicy.requireReadable(post, currentUser);
         return post;
     }
 
     public List<PostDtos.PostDto> assemblePostDtos(List<Post> posts, CurrentUser currentUser) {
         if (posts == null || posts.isEmpty()) {
+            return List.of();
+        }
+
+        // 动态与历史收藏都可能包含已失去权限的帖子，组装前统一过滤。
+        posts = posts.stream().filter(post -> PostAccessPolicy.canRead(post, currentUser)).toList();
+        if (posts.isEmpty()) {
             return List.of();
         }
 
@@ -501,6 +518,16 @@ public class PostService {
                     .collect(Collectors.toSet());
         }
 
+        List<Long> visiblePostIds = posts.stream().map(Post::getId).toList();
+        Map<Long, Integer> acceptedTotals = voteRepository.clocks(visiblePostIds).stream()
+                .collect(Collectors.toMap(VoteRepository.Clock::postId, VoteRepository.Clock::acceptedTotal));
+        if (currentUser != null) {
+            Map<Long, Integer> acceptedUserVotes = voteRepository.userStates(visiblePostIds, currentUser.id()).stream()
+                    .collect(Collectors.toMap(VoteRepository.State::postId, VoteRepository.State::desiredValue));
+            userVotes = new HashMap<>(userVotes);
+            userVotes.putAll(acceptedUserVotes);
+        }
+        Map<Long, Long> uvCounts = readMetrics.uvCounts(visiblePostIds);
         Map<Long, Integer> finalUserVotes = userVotes;
         Set<Long> finalBookmarkedIds = bookmarkedIds;
 
@@ -516,17 +543,8 @@ public class PostService {
                     : new PostDtos.CommunityRefDto("unknown", "未知社区");
 
             int userVote = finalUserVotes.getOrDefault(p.getId(), 0);
-            if (currentUser != null && userVote == 0) {
-                try {
-                    String v = stringRedisTemplate.opsForValue().get("vote:post:" + p.getId() + ":" + currentUser.id());
-                    if (v != null) {
-                        userVote = Integer.parseInt(v);
-                    }
-                } catch (Exception ignored) {}
-            }
-
             boolean bookmarked = finalBookmarkedIds.contains(p.getId());
-            long uv = getPostUVCount(p.getId());
+            long uv = uvCounts.getOrDefault(p.getId(), 0L);
 
             return new PostDtos.PostDto(
                     String.valueOf(p.getId()),
@@ -536,7 +554,7 @@ public class PostService {
                     p.getContent(),
                     p.getImageUrl(),
                     TimeText.from(p.getCreatedAt()),
-                    p.getVotes(),
+                    acceptedTotals.getOrDefault(p.getId(), p.getVotes()),
                     p.getCommentsCount(),
                     p.getPostType(),
                     bookmarked,
@@ -547,6 +565,7 @@ public class PostService {
     }
 
     public PostDtos.PostDto toDto(Post post, CurrentUser currentUser) {
+        PostAccessPolicy.requireReadable(post, currentUser);
         return assemblePostDtos(List.of(post), currentUser).get(0);
     }
 }

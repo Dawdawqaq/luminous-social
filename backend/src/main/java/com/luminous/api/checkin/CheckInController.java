@@ -31,8 +31,9 @@ public class CheckInController {
     @GetMapping("/{communitySlug}/stats")
     public ApiResponse<CheckInDtos.CheckInStats> stats(
         @PathVariable String communitySlug,
+        @RequestParam(required = false) String month,
         @AuthenticationPrincipal CurrentUser currentUser
     ) {
-        return ApiResponse.ok(checkInService.getStats(communitySlug, currentUser));
+        return ApiResponse.ok(checkInService.getStats(communitySlug, currentUser, month));
     }
 }

@@ -19,16 +19,18 @@ public class StorageConfig {
             @Value("${app.storage.minio.endpoint:http://localhost:9000}") String endpoint,
             @Value("${app.storage.minio.access-key:minioadmin}") String accessKey,
             @Value("${app.storage.minio.secret-key:minioadmin}") String secretKey,
-            @Value("${app.storage.minio.bucket:luminous-uploads}") String bucket
+            @Value("${app.storage.minio.bucket:luminous-uploads}") String bucket,
+            @Value("${app.storage.minio.public-endpoint:${app.public-base-url}}") String publicEndpoint
     ) {
-        return new MinioStorageProvider(endpoint, accessKey, secretKey, bucket);
+        return new MinioStorageProvider(endpoint, accessKey, secretKey, bucket, publicEndpoint);
     }
 
     @Bean
     @ConditionalOnProperty(name = "app.storage.type", havingValue = "local", matchIfMissing = true)
     public StorageProvider localStorageProvider(
-            @Value("${app.upload.dir:./uploads}") String uploadDir
+            @Value("${app.upload.dir:./uploads}") String uploadDir,
+            @Value("${app.public-base-url}") String publicOrigin
     ) {
-        return new LocalStorageProvider(uploadDir);
+        return new LocalStorageProvider(uploadDir, publicOrigin);
     }
 }

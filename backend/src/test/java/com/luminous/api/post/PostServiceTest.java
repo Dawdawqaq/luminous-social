@@ -12,6 +12,10 @@ import com.luminous.api.community.CommunityService;
 import com.luminous.api.security.CurrentUser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
+import com.luminous.api.mq.VoteMessage;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -80,6 +84,18 @@ class PostServiceTest {
     @Mock
     private com.luminous.api.mq.VoteMQProducer voteMQProducer;
 
+    @Mock
+    private org.springframework.data.redis.core.HyperLogLogOperations<String, String> hyperLogLogOperations;
+
+    @Mock
+    private org.springframework.data.redis.core.ValueOperations<String, String> valueOperations;
+
+    @Mock private com.luminous.api.vote.VoteCommandService voteCommandService;
+    @Mock private com.luminous.api.vote.VoteProjectionService voteProjectionService;
+    @Mock private com.luminous.api.vote.VoteRepository voteRepository;
+
+    @Mock private com.luminous.api.cache.PostReadMetricsService readMetrics;
+
     @InjectMocks
     private PostService postService;
 
@@ -90,6 +106,8 @@ class PostServiceTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        lenient().when(stringRedisTemplate.opsForHyperLogLog()).thenReturn(hyperLogLogOperations);
+        lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         currentUser = new CurrentUser(1L, "felix", "USER");
 
         sampleAuthor = new User();
@@ -164,11 +182,9 @@ class PostServiceTest {
     }
 
     @Test
-    void list_DeepPaginationCircuitBreaker_ReturnsEmptyPage() {
-        PageResponse<PostDtos.PostDto> response = postService.list("hot", null, null, 51, 10, currentUser);
-
-        assertThat(response.items()).isEmpty();
-        assertThat(response.total()).isEqualTo(0);
+    void list_DeepPaginationReturnsExplicitWindowLimit() {
+        assertThatThrownBy(() -> postService.list("hot", null, null, 51, 10, currentUser))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> assertThat(ex.getCode()).isEqualTo("POST_WINDOW_LIMIT"));
         verify(postMapper, never()).selectPage(any(), any());
     }
 
@@ -212,8 +228,8 @@ class PostServiceTest {
 
     @Test
     void votePost_CalculatesDeltaAndExecutesAtomicUpdate() {
-        when(redisLuaScriptService.executeVoteScript(eq(500L), eq(1L), eq(1)))
-                .thenReturn(List.of(0L, 1L, 1L));
+        when(voteCommandService.accept(500L, 1L, 1)).thenReturn(new com.luminous.api.vote.VoteCommandService.Accepted(
+                new VoteMessage(500L, 1L, 1, 1, 100L, "[E2E_TEST]-vote", 1), 1));
         when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
         when(communityService.mapByIds(any())).thenReturn(Map.of(10L, sampleCommunity));
 
@@ -236,5 +252,83 @@ class PostServiceTest {
                 });
 
         verify(postMapper, never()).deleteById(500L);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0,1,1", "1,1,0", "1,0,-1", "-1,0,1", "1,-1,-2", "-1,1,2", "0,-1,-1"})
+    void votePost_UsesDurableStateAndDelta(int oldValue, int value, int delta) {
+        when(voteCommandService.accept(500L, 1L, value)).thenReturn(new com.luminous.api.vote.VoteCommandService.Accepted(
+                new VoteMessage(500L, 1L, value, delta, 100L, "[E2E_TEST]-vote", 1), delta));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
+        when(communityService.mapByIds(any())).thenReturn(Map.of(10L, sampleCommunity));
+
+        PostDtos.PostDto result = postService.votePost(500L, value, currentUser);
+
+        ArgumentCaptor<VoteMessage> captor = ArgumentCaptor.forClass(VoteMessage.class);
+        verify(voteMQProducer).sendVoteMessage(captor.capture());
+        assertThat(captor.getValue().value()).isEqualTo(value);
+        assertThat(captor.getValue().delta()).isEqualTo(delta);
+        assertThat(result.userVote()).isEqualTo(value);
+        assertThat(result.votes()).isEqualTo(delta);
+    }
+
+    @Test
+    void votePost_CacheFailureDoesNotLoseAcceptedEvent() {
+        VoteMessage message = new VoteMessage(500L, 1L, 1, 1, 100L, "[E2E_TEST]-cache-failure", 1);
+        when(voteCommandService.accept(500L, 1L, 1)).thenReturn(new com.luminous.api.vote.VoteCommandService.Accepted(message, 1));
+        when(voteProjectionService.refreshCommitted(500L)).thenThrow(new IllegalStateException("[E2E_TEST] Redis 不可用"));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
+        when(communityService.mapByIds(any())).thenReturn(Map.of(10L, sampleCommunity));
+        assertThat(postService.votePost(500L, 1, currentUser).userVote()).isEqualTo(1);
+        verify(voteMQProducer).sendVoteMessage(message);
+    }
+
+    @Test
+    void privatePost_RejectsAnonymousAndOtherUsersBeforeReadingOrWriting() {
+        samplePost.setIsPublic(false);
+        CurrentUser other = new CurrentUser(2L, "other", "USER");
+        Comment comment = new Comment();
+        comment.setId(600L);
+        comment.setPostId(500L);
+        when(commentMapper.selectById(600L)).thenReturn(comment);
+
+        assertHidden(() -> postService.detail(500L, null));
+        assertHidden(() -> postService.detail(500L, other));
+        assertHidden(() -> postService.comments(500L, null));
+        assertHidden(() -> postService.comments(500L, other));
+        assertHidden(() -> postService.addComment(500L, new PostDtos.CreateCommentRequest("[E2E_TEST]"), other));
+        assertHidden(() -> postService.votePost(500L, 1, other));
+        assertHidden(() -> postService.voteComment(600L, 1, other));
+        assertHidden(() -> postService.bookmark(500L, other));
+        assertHidden(() -> postService.removeBookmark(500L, other));
+        assertHidden(() -> postService.deletePost(500L, other));
+        assertHidden(() -> postService.deleteComment(600L, other));
+        assertHidden(() -> postService.toDto(samplePost, other));
+        assertThat(postService.assemblePostDtos(List.of(samplePost), other)).isEmpty();
+        verifyNoInteractions(voteCommandService, voteProjectionService, voteMQProducer, commentVoteMapper, bookmarkMapper);
+        verify(commentMapper, never()).insert(any(Comment.class));
+        verify(commentMapper, never()).selectList(any());
+    }
+
+    @Test
+    void privatePost_AllowsAuthorAndAdministrator() {
+        samplePost.setIsPublic(false);
+        assertThat(postService.requirePost(500L, currentUser)).isSameAs(samplePost);
+        assertThat(postService.requirePost(500L, new CurrentUser(2L, "admin", "ADMIN"))).isSameAs(samplePost);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true", "false"})
+    void create_OnlyPublicPostsAreFannedOut(boolean isPublic) {
+        when(communityService.requireBySlug("tech")).thenReturn(sampleCommunity);
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
+        when(communityService.mapByIds(any())).thenReturn(Map.of(10L, sampleCommunity));
+        postService.create(new PostDtos.CreatePostRequest("tech", "[E2E_TEST]", "内容", null, null, isPublic), currentUser);
+        verify(feedService, times(isPublic ? 1 : 0)).fanOutToFollowers(eq(1L), anyLong());
+    }
+
+    private void assertHidden(Runnable action) {
+        assertThatThrownBy(action::run).isInstanceOf(BusinessException.class)
+                .satisfies(ex -> assertThat(((BusinessException) ex).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
     }
 }

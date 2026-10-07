@@ -36,6 +36,9 @@ public class FullSystemIntegrationTest {
     private TestRestTemplate restTemplate;
 
     @Autowired
+    private com.luminous.api.security.CaptchaService captchaService;
+
+    @Autowired
     private StringRedisTemplate redisTemplate;
 
     @Autowired
@@ -53,6 +56,7 @@ public class FullSystemIntegrationTest {
     private HttpHeaders createAuthHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Idempotency-Key", UUID.randomUUID().toString());
         if (token != null) {
             headers.setBearerAuth(token);
         }
@@ -70,7 +74,7 @@ public class FullSystemIntegrationTest {
         ResponseEntity<ApiResponse<AuthDtos.AuthResponse>> respA = restTemplate.exchange(
                 getBaseUrl() + "/auth/register",
                 HttpMethod.POST,
-                new HttpEntity<>(reqA),
+                new HttpEntity<>(reqA, AuthHttpTestSupport.proofHeaders(captchaService, redisTemplate, "register")),
                 new ParameterizedTypeReference<>() {}
         );
         assertThat(respA.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -84,7 +88,7 @@ public class FullSystemIntegrationTest {
         ResponseEntity<ApiResponse<AuthDtos.AuthResponse>> respB = restTemplate.exchange(
                 getBaseUrl() + "/auth/register",
                 HttpMethod.POST,
-                new HttpEntity<>(reqB),
+                new HttpEntity<>(reqB, AuthHttpTestSupport.proofHeaders(captchaService, redisTemplate, "register")),
                 new ParameterizedTypeReference<>() {}
         );
         assertThat(respB.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -174,7 +178,7 @@ public class FullSystemIntegrationTest {
     void test04_PostCreationAndFeedFanOut() throws Exception {
         HttpHeaders headersA = createAuthHeaders(tokenUserA);
         PostDtos.CreatePostRequest postReq = new PostDtos.CreatePostRequest(
-                communitySlug, "Distributed Cache Best Practices", "Deep dive into L1/L2 caching with Redis & Caffeine", null, true
+                communitySlug, "Distributed Cache Best Practices", "Deep dive into L1/L2 caching with Redis & Caffeine", null, null, true
         );
 
         ResponseEntity<ApiResponse<PostDtos.PostDto>> postResp = restTemplate.exchange(
@@ -247,15 +251,15 @@ public class FullSystemIntegrationTest {
         );
         assertThat(firstResp.getStatusCode()).isEqualTo(HttpStatus.OK);
 
-        // Second attempt with same idempotency key -> 409 Conflict
+        // 同一操作重放已提交的成功结果，不再重复写入。
         ResponseEntity<ApiResponse<Object>> secondResp = restTemplate.exchange(
                 getBaseUrl() + "/posts/" + createdPostId + "/comments",
                 HttpMethod.POST,
                 new HttpEntity<>(commentReq, headersA),
                 new ParameterizedTypeReference<>() {}
         );
-        assertThat(secondResp.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-        assertThat(secondResp.getBody().success()).isFalse();
-        assertThat(secondResp.getBody().error().code()).isEqualTo("DUPLICATE_REQUEST");
+        assertThat(secondResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(secondResp.getBody().success()).isTrue();
+        assertThat(secondResp.getHeaders().getFirst("Idempotency-Replayed")).isEqualTo("true");
     }
 }

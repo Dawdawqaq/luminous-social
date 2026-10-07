@@ -2,82 +2,46 @@ package com.luminous.api.mq;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luminous.api.notification.NotificationEvent;
-import com.luminous.api.notification.NotificationService;
-import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyContext;
-import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus;
+import org.apache.rocketmq.client.consumer.listener.*;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
-
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.List;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class NotificationMQConsumerTest {
-
-    @Mock
-    private NotificationService notificationService;
-
-    @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private ValueOperations<String, String> valueOperations;
-
-    @Mock
-    private ConsumeConcurrentlyContext context;
-
-    private ObjectMapper objectMapper = new ObjectMapper();
+    @Mock private NotificationTransactionService transactions;
+    @Mock private FailedMessageService failures;
+    private final ObjectMapper mapper = new ObjectMapper();
     private NotificationMQConsumer consumer;
-
-    @BeforeEach
-    void setUp() {
-        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        consumer = new NotificationMQConsumer(notificationService, redisTemplate, objectMapper);
+    @BeforeEach void setUp() { consumer = new NotificationMQConsumer(transactions, failures, mapper); }
+    private MessageExt message(NotificationEvent event, int retries) throws Exception {
+        MessageExt message = new MessageExt(); message.setMsgId("[E2E_TEST]-broker"); message.setKeys(event.eventId());
+        message.setBody(mapper.writeValueAsBytes(event)); message.setReconsumeTimes(retries); return message;
     }
-
-    @Test
-    void consumeMessage_ConsumesSuccessfully_WhenFirstTime() throws Exception {
-        NotificationEvent event = new NotificationEvent(
-                1L, 2L, "LIKE_POST", "POST", 100L, "Sample Post"
-        );
-        String json = objectMapper.writeValueAsString(event);
-
-        MessageExt msg = new MessageExt();
-        msg.setMsgId("MSG_12345");
-        msg.setBody(json.getBytes(StandardCharsets.UTF_8));
-
-        when(valueOperations.setIfAbsent(eq("mq:dedup:notification:MSG_12345"), eq("PROCESSING"), any(Duration.class)))
-                .thenReturn(true);
-
-        ConsumeConcurrentlyStatus status = consumer.consumeMessage(List.of(msg), context);
-
-        assertThat(status).isEqualTo(ConsumeConcurrentlyStatus.CONSUME_SUCCESS);
-        verify(notificationService, times(1)).handleEvent(any(NotificationEvent.class));
+    @Test void consumesThroughTransactionService() throws Exception {
+        NotificationEvent event = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST]");
+        assertThat(consumer.consumeMessage(List.of(message(event, 0)), null)).isEqualTo(ConsumeConcurrentlyStatus.CONSUME_SUCCESS);
+        verify(transactions).process(event.eventId(), event);
     }
-
-    @Test
-    void consumeMessage_SkipsDuplicate_WhenAlreadyProcessed() {
-        MessageExt msg = new MessageExt();
-        msg.setMsgId("MSG_DUPLICATE");
-        msg.setBody("{}".getBytes(StandardCharsets.UTF_8));
-
-        when(valueOperations.setIfAbsent(eq("mq:dedup:notification:MSG_DUPLICATE"), eq("PROCESSING"), any(Duration.class)))
-                .thenReturn(false);
-
-        ConsumeConcurrentlyStatus status = consumer.consumeMessage(List.of(msg), context);
-
-        assertThat(status).isEqualTo(ConsumeConcurrentlyStatus.CONSUME_SUCCESS);
-        verify(notificationService, never()).handleEvent(any());
+    @Test void archiveFailureDoesNotAcknowledge() throws Exception {
+        NotificationEvent event = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST]");
+        doThrow(new IllegalStateException("[E2E_TEST] 业务失败")).when(transactions).process(anyString(), any());
+        doThrow(new IllegalStateException("[E2E_TEST] 归档失败")).when(failures).archive(anyString(),anyString(),anyString(),anyInt(),any());
+        assertThat(consumer.consumeMessage(List.of(message(event, 3)), null)).isEqualTo(ConsumeConcurrentlyStatus.RECONSUME_LATER);
+    }
+    @Test void archivedFailureDoesNotSkipRestOfBatch() throws Exception {
+        NotificationEvent first = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST] 失败");
+        NotificationEvent second = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST] 成功");
+        doThrow(new IllegalStateException("[E2E_TEST]")).when(transactions).process(first.eventId(), first);
+        assertThat(consumer.consumeMessage(List.of(message(first, 3), message(second, 0)), null)).isEqualTo(ConsumeConcurrentlyStatus.CONSUME_SUCCESS);
+        verify(failures).archive(eq("NOTIFICATION"),eq(first.eventId()),anyString(),eq(4),any());
+        verify(transactions).process(second.eventId(), second);
     }
 }

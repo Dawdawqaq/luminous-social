@@ -34,6 +34,11 @@ public class UserStatsCacheService {
 
     public Stats getUserStats(Long userId) {
         String redisKey = CacheConstants.USER_STATS_KEY + userId;
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            return new Stats(postMapper.selectCount(new LambdaQueryWrapper<Post>().eq(Post::getAuthorId, userId)),
+                    userFollowMapper.selectCount(new LambdaQueryWrapper<UserFollow>().eq(UserFollow::getFollowingId, userId)),
+                    userFollowMapper.selectCount(new LambdaQueryWrapper<UserFollow>().eq(UserFollow::getFollowerId, userId)));
+        }
         try {
             List<Object> values = stringRedisTemplate.opsForHash().multiGet(redisKey, List.of("posts", "followers", "following"));
             if (values.size() == 3 && values.get(0) != null && values.get(1) != null && values.get(2) != null) {
@@ -100,40 +105,14 @@ public class UserStatsCacheService {
     }
 
     public void invalidateUserStats(Long userId) {
-        String redisKey = CacheConstants.USER_STATS_KEY + userId;
-        try {
-            stringRedisTemplate.delete(redisKey);
-        } catch (Exception e) {
-            log.warn("Failed to invalidate user stats for user {}", userId, e);
-        }
-    }
-    
-    private static final org.springframework.data.redis.core.script.DefaultRedisScript<Long> HINCRBY_IF_EXISTS_SCRIPT;
-
-    static {
-        HINCRBY_IF_EXISTS_SCRIPT = new org.springframework.data.redis.core.script.DefaultRedisScript<>();
-        HINCRBY_IF_EXISTS_SCRIPT.setScriptText(
-                "if redis.call('EXISTS', KEYS[1]) == 1 then " +
-                "    return redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2]) " +
-                "else " +
-                "    return nil " +
-                "end"
-        );
-        HINCRBY_IF_EXISTS_SCRIPT.setResultType(Long.class);
+        com.luminous.api.common.AfterCommit.run(() -> {
+            try { stringRedisTemplate.delete(CacheConstants.USER_STATS_KEY + userId); }
+            catch (Exception ex) { log.warn("提交后清理用户统计缓存失败，userId={}", userId, ex); }
+        });
     }
 
     private void incrementHashField(Long userId, String field, long delta) {
-        String redisKey = CacheConstants.USER_STATS_KEY + userId;
-        try {
-            // 原子执行：只有当 Key 存在时才递增，彻底杜绝 Key 过期导致的残缺 Hash 写入
-            stringRedisTemplate.execute(
-                    HINCRBY_IF_EXISTS_SCRIPT,
-                    List.of(redisKey),
-                    field,
-                    String.valueOf(delta)
-            );
-        } catch (Exception e) {
-            log.warn("Failed to atomically modify user stats for user {}", userId, e);
-        }
+        // 缓存只失效，不累加；回滚、并发重建和重复调用都不会造成统计漂移。
+        invalidateUserStats(userId);
     }
 }

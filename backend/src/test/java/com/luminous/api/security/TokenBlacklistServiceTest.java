@@ -1,63 +1,38 @@
 package com.luminous.api.security;
 
+import com.luminous.api.auth.*;
+import com.luminous.api.common.BusinessException;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
-
+import org.springframework.data.redis.core.*;
 import java.time.Duration;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
 class TokenBlacklistServiceTest {
-
-    @Mock
-    private StringRedisTemplate redisTemplate;
-
-    @Mock
-    private ValueOperations<String, String> valueOperations;
-
-    @InjectMocks
-    private TokenBlacklistService tokenBlacklistService;
-
-    @Test
-    void banUser_SetsKeyInRedis() {
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-
-        tokenBlacklistService.banUser(123L, Duration.ofHours(1));
-
-        verify(valueOperations).set(eq("luminous:ban:user:123"), eq("banned"), eq(Duration.ofHours(1)));
+    @Test void configuredTokenLifetimeControlsHintCache() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class); ValueOperations<String,String> values = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        new TokenBlacklistService(redis, mock(UserMapper.class), 4320).banUser(123L);
+        verify(values).set("luminous:ban:user:123", "banned", Duration.ofDays(3));
     }
-
-    @Test
-    void unbanUser_DeletesKeyInRedis() {
-        tokenBlacklistService.unbanUser(123L);
-
-        verify(redisTemplate).delete("luminous:ban:user:123");
+    @Test void missingOrBannedUsersAreDeniedRegardlessOfRedis() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class); UserMapper users = mock(UserMapper.class);
+        TokenBlacklistService service = new TokenBlacklistService(redis, users, 60);
+        assertThat(service.isUserBanned(123L)).isTrue();
+        User user = new User(); user.setIsBanned(true); when(users.selectById(123L)).thenReturn(user);
+        assertThat(service.isUserBanned(123L)).isTrue();
+        user.setIsBanned(false); assertThat(service.isUserBanned(123L)).isFalse();
+        verifyNoInteractions(redis);
     }
-
-    @Test
-    void isUserBanned_ReturnsTrue_WhenKeyExists() {
-        when(redisTemplate.hasKey("luminous:ban:user:123")).thenReturn(true);
-
-        boolean banned = tokenBlacklistService.isUserBanned(123L);
-
-        assertThat(banned).isTrue();
+    @Test void databaseFailureNeverGrantsAccess() {
+        UserMapper users = mock(UserMapper.class); when(users.selectById(123L)).thenThrow(new IllegalStateException("数据库不可用"));
+        assertThatThrownBy(() -> new TokenBlacklistService(mock(StringRedisTemplate.class), users, 60).isUserBanned(123L))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> assertThat(ex.getStatus().value()).isEqualTo(503));
     }
-
-    @Test
-    void isUserBanned_ReturnsFalse_WhenKeyDoesNotExist() {
-        when(redisTemplate.hasKey("luminous:ban:user:123")).thenReturn(false);
-
-        boolean banned = tokenBlacklistService.isUserBanned(123L);
-
-        assertThat(banned).isFalse();
+    @Test void unbanClearsHintCache() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        new TokenBlacklistService(redis, mock(UserMapper.class), 60).unbanUser(123L);
+        verify(redis).delete("luminous:ban:user:123");
     }
 }

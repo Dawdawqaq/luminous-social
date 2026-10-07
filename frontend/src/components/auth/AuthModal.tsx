@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
@@ -28,7 +28,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
 
-  const [isCaptchaVerified, setIsCaptchaVerified] = useState(false);
+  const [captchaProof, setCaptchaProof] = useState('');
+  const [captchaGeneration, setCaptchaGeneration] = useState(0);
+  const submitting = useRef(false);
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const [usernameError, setUsernameError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -38,7 +40,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setUsername('');
     setDisplayName('');
     setPassword('');
-    setIsCaptchaVerified(false);
+    setCaptchaProof('');
+    setCaptchaGeneration(value => value + 1);
     setUsernameStatus('idle');
     setUsernameError('');
   };
@@ -48,7 +51,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setUsername('');
     setDisplayName('');
     setPassword('');
-    setIsCaptchaVerified(false);
+    setCaptchaProof('');
+    setCaptchaGeneration(value => value + 1);
     setUsernameStatus('idle');
     setUsernameError('');
   }, [defaultMode, isOpen]);
@@ -80,6 +84,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting.current) return;
     if (mode === 'login' && (!username.trim() || !password)) {
       showToast('请完整填写用户 ID 与密码', 'error');
       return;
@@ -90,18 +95,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (mode === 'register' && !isCaptchaVerified) {
+    if (!captchaProof) {
       showToast('请先完成下方的滑块安全验证', 'warning');
       return;
     }
 
     try {
+      submitting.current = true;
       setIsLoading(true);
       if (mode === 'login') {
         const res = await authApi.login({
           username: username.trim(),
           password,
-        });
+        }, captchaProof);
         login(res.token, res.user);
         showToast(`登录成功，欢迎回来 ${res.user.displayName || res.user.username}`, 'success');
       } else {
@@ -109,14 +115,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           username: username.trim(),
           displayName: displayName.trim(),
           password,
-        });
+        }, captchaProof);
         login(res.token, res.user);
         showToast('账号注册成功，已自动登录', 'success');
       }
       onClose();
     } catch (err: any) {
       showToast(err.message || '登录失败，请检查账号密码', 'error');
+      if (err.status && err.status >= 400 && err.status < 500) {
+        setCaptchaProof(''); setCaptchaGeneration(value => value + 1);
+      }
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   };
@@ -180,20 +190,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {mode === 'register' && <PasswordStrength password={password} />}
         </div>
 
-        {mode === 'register' && (
-          <SliderCaptcha
-            onSuccess={() => {
-              setIsCaptchaVerified(true);
-              showToast('人机验证通过', 'info');
-            }}
-          />
-        )}
+        <SliderCaptcha key={`${mode}-${captchaGeneration}`} purpose={mode} onReset={() => setCaptchaProof('')}
+          onSuccess={proof => setCaptchaProof(proof)} />
 
         <Button
           type="submit"
           className="w-full mt-2"
           isLoading={isLoading}
-          disabled={mode === 'register' && !isCaptchaVerified}
+          disabled={!captchaProof}
         >
           {mode === 'login' ? '立即登录' : '完成注册'}
         </Button>

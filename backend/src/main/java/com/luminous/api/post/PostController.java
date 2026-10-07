@@ -44,11 +44,14 @@ public class PostController {
 
     @Operation(summary = "获取帖子详情")
     @GetMapping("/posts/{id}")
-    public ApiResponse<PostDtos.PostDto> detail(@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser) {
-        return ApiResponse.ok(postService.detail(id, currentUser));
+    public ApiResponse<PostDtos.PostDto> detail(@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+            jakarta.servlet.http.HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response) {
+        String anonymousId = currentUser == null ? AnonymousVisitorIdentity.resolve(request, response) : null;
+        return ApiResponse.ok(postService.detail(id, currentUser, anonymousId));
     }
 
     @Operation(summary = "创建帖子")
+    @com.luminous.api.security.Idempotent
     @PostMapping("/posts")
     public ApiResponse<PostDtos.PostDto> create(@Valid @RequestBody PostDtos.CreatePostRequest request,
                                                 @AuthenticationPrincipal CurrentUser currentUser) {

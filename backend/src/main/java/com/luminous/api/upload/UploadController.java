@@ -20,6 +20,7 @@ public class UploadController {
     }
 
     @Operation(summary = "上传帖子图片")
+    @com.luminous.api.security.Idempotent
     @PostMapping("/images")
     public ApiResponse<UploadDtos.UploadResponse> uploadImage(@RequestParam("file") MultipartFile file,
                                                               @AuthenticationPrincipal CurrentUser currentUser) {

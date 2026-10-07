@@ -17,6 +17,9 @@ public class RedissonConfig {
     @Value("${spring.data.redis.port:6379}")
     private int redisPort;
 
+    @Value("${spring.data.redis.username:}")
+    private String redisUsername;
+
     @Value("${spring.data.redis.password:}")
     private String redisPassword;
 
@@ -30,6 +33,9 @@ public class RedissonConfig {
                 .setRetryAttempts(3)
                 .setRetryInterval(1000);
 
+        if (redisUsername != null && !redisUsername.isBlank()) {
+            serverConfig.setUsername(redisUsername);
+        }
         if (redisPassword != null && !redisPassword.isBlank()) {
             serverConfig.setPassword(redisPassword);
         }

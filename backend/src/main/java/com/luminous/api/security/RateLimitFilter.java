@@ -36,11 +36,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final SlidingWindowRateLimiter slidingWindowRateLimiter;
     private final ObjectMapper objectMapper;
     private final Environment environment;
+    private final ClientIpResolver ipResolver;
 
-    public RateLimitFilter(SlidingWindowRateLimiter slidingWindowRateLimiter, ObjectMapper objectMapper, Environment environment) {
+    public RateLimitFilter(SlidingWindowRateLimiter slidingWindowRateLimiter, ObjectMapper objectMapper, Environment environment, ClientIpResolver ipResolver) {
         this.slidingWindowRateLimiter = slidingWindowRateLimiter;
         this.objectMapper = objectMapper;
         this.environment = environment;
+        this.ipResolver = ipResolver;
     }
 
     @Override
@@ -52,8 +54,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String path = request.getServletPath();
         String method = request.getMethod();
         // 仅拦截注册与登录接口
-        return !("POST".equalsIgnoreCase(method) &&
-                (path.equals("/api/auth/login") || path.equals("/api/auth/register")));
+        return !(("POST".equalsIgnoreCase(method) || "GET".equalsIgnoreCase(method)) &&
+                (path.equals("/api/auth/login") || path.equals("/api/auth/register") || path.startsWith("/api/auth/captcha")));
     }
 
     private boolean isBypassAllowedEnvironment() {
@@ -61,7 +63,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (activeProfiles == null || activeProfiles.length == 0) {
             return true; // 默认缺省 profile 视同开发环境
         }
-        return Arrays.stream(activeProfiles).anyMatch(ALLOWED_BYPASS_PROFILES::contains);
+        return Arrays.stream(activeProfiles).noneMatch("prod"::equals)
+                && Arrays.stream(activeProfiles).anyMatch(ALLOWED_BYPASS_PROFILES::contains);
     }
 
     @Override
@@ -70,10 +73,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     FilterChain filterChain)
             throws ServletException, IOException {
 
-        String ip = resolveClientIp(request);
+        String ip = ipResolver.resolve(request);
         String key = RATE_LIMIT_PREFIX + ip;
 
-        boolean allowed = slidingWindowRateLimiter.isAllowed(key, MAX_REQUESTS, WINDOW_DURATION);
+        boolean allowed;
+        try { allowed = slidingWindowRateLimiter.isAllowed(key, MAX_REQUESTS, WINDOW_DURATION); }
+        catch (com.luminous.api.common.BusinessException ex) {
+            response.setStatus(ex.getStatus().value()); response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+            response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail(ex.getCode(), ex.getMessage())));
+            return;
+        }
         if (!allowed) {
             log.warn("Sliding window rate limit exceeded for IP: {}", ip);
             response.setStatus(429);
@@ -88,11 +98,4 @@ public class RateLimitFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
-    }
 }

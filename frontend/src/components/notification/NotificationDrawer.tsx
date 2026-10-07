@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, CheckCheck } from 'lucide-react';
 import { Notification } from '../../types';
 import { notificationApi } from '../../api/client';
 import { formatTimeAgo } from '../../utils';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
+import { useNotifications } from '../../context/NotificationContext';
 import { Avatar } from '../ui/Avatar';
 
 interface NotificationDrawerProps {
@@ -13,28 +15,35 @@ interface NotificationDrawerProps {
 
 export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ isOpen, onClose }) => {
   const { showToast } = useToast();
+  const { user, isAuthenticated } = useAuth();
+  const { unreadCount, refresh } = useNotifications();
+  const requests = useRef(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const fetchNotifications = async () => {
+    const request = ++requests.current;
     try {
       setIsLoading(true);
       const res = await notificationApi.list({ size: 30 });
-      setNotifications(res.items || []);
+      if (request === requests.current) setNotifications(res.items || []);
     } catch {
     } finally {
-      setIsLoading(false);
+      if (request === requests.current) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    if (isOpen) fetchNotifications();
-  }, [isOpen]);
+    if (isOpen && isAuthenticated) { void fetchNotifications(); void refresh(); }
+    else { requests.current++; setNotifications([]); }
+    return () => { requests.current++; };
+  }, [isOpen, isAuthenticated, user?.id]);
+  useEffect(() => { if (isOpen && isAuthenticated) void fetchNotifications(); }, [unreadCount]);
 
   const handleMarkAllAsRead = async () => {
     try {
       await notificationApi.markAllAsRead();
-      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      await fetchNotifications();
       showToast('全部通知已标记为已读', 'info');
     } catch (err: any) {
       showToast(err.message || '操作失败', 'error');
@@ -50,7 +59,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({ isOpen, 
     } catch {}
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !isAuthenticated) return null;
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">

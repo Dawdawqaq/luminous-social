@@ -298,6 +298,9 @@ export const HomePage: React.FC<HomePageProps> = ({
             </span>
           </div>
 
+          {filter !== 'feed' && <p className="mb-3 text-xs text-ink-subtle dark:text-night-subtle">
+            当前筛选最多展示 500 篇，可按社区或搜索缩小范围。
+          </p>}
           {isLoading ? (
             <div className="py-24 text-center space-y-3">
               <Loader2 className="w-6 h-6 animate-spin mx-auto text-ink-subtle" />

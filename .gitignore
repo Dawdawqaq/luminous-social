@@ -17,6 +17,7 @@ _Run_*.class
 .env.dev
 .env.prod
 .env*.local
+.local/
 !.env.example
 
 # --- [前端开发与构建隔离] ---

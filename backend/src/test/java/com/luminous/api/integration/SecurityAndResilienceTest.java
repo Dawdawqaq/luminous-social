@@ -32,6 +32,9 @@ public class SecurityAndResilienceTest {
     private TestRestTemplate restTemplate;
 
     @Autowired
+    private com.luminous.api.security.CaptchaService captchaService;
+
+    @Autowired
     private org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
 
     private String tokenAdmin;
@@ -46,6 +49,7 @@ public class SecurityAndResilienceTest {
     private HttpHeaders createAuthHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Idempotency-Key", UUID.randomUUID().toString());
         if (token != null) {
             headers.setBearerAuth(token);
         }
@@ -62,7 +66,7 @@ public class SecurityAndResilienceTest {
         String uA = "sec_user_a_" + UUID.randomUUID().toString().substring(0, 6);
         AuthDtos.RegisterRequest reqA = new AuthDtos.RegisterRequest(uA, "User A", "SecPass123!");
         ResponseEntity<ApiResponse<AuthDtos.AuthResponse>> rA = restTemplate.exchange(
-                getBaseUrl() + "/auth/register", HttpMethod.POST, new HttpEntity<>(reqA), new ParameterizedTypeReference<>() {}
+                getBaseUrl() + "/auth/register", HttpMethod.POST, new HttpEntity<>(reqA, AuthHttpTestSupport.proofHeaders(captchaService, redisTemplate, "register")), new ParameterizedTypeReference<>() {}
         );
         tokenUserA = rA.getBody().data().token();
 
@@ -70,7 +74,7 @@ public class SecurityAndResilienceTest {
         String uB = "sec_user_b_" + UUID.randomUUID().toString().substring(0, 6);
         AuthDtos.RegisterRequest reqB = new AuthDtos.RegisterRequest(uB, "User B", "SecPass123!");
         ResponseEntity<ApiResponse<AuthDtos.AuthResponse>> rB = restTemplate.exchange(
-                getBaseUrl() + "/auth/register", HttpMethod.POST, new HttpEntity<>(reqB), new ParameterizedTypeReference<>() {}
+                getBaseUrl() + "/auth/register", HttpMethod.POST, new HttpEntity<>(reqB, AuthHttpTestSupport.proofHeaders(captchaService, redisTemplate, "register")), new ParameterizedTypeReference<>() {}
         );
         tokenUserB = rB.getBody().data().token();
 
@@ -84,7 +88,7 @@ public class SecurityAndResilienceTest {
 
         ResponseEntity<ApiResponse<PostDtos.PostDto>> postResp = restTemplate.exchange(
                 getBaseUrl() + "/posts", HttpMethod.POST,
-                new HttpEntity<>(new PostDtos.CreatePostRequest(slug, "Target Post for Security", "Content", null, true), createAuthHeaders(tokenUserA)),
+                new HttpEntity<>(new PostDtos.CreatePostRequest(slug, "Target Post for Security", "Content", null, null, true), createAuthHeaders(tokenUserA)),
                 new ParameterizedTypeReference<>() {}
         );
         userAPostId = postResp.getBody().data().id();

@@ -2,184 +2,89 @@ package com.luminous.api.checkin;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.luminous.api.cache.CacheConstants;
+import com.luminous.api.common.AfterCommit;
 import com.luminous.api.common.BusinessException;
-import com.luminous.api.community.Community;
-import com.luminous.api.community.CommunityMember;
-import com.luminous.api.community.CommunityMemberMapper;
-import com.luminous.api.community.CommunityService;
+import com.luminous.api.community.*;
 import com.luminous.api.security.CurrentUser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDate;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+/** 数据库原子签到，Redis 位图仅作提交后的短期投影；连续天数跨月计算。 */
 @Service
 public class CheckInService {
-
     private static final Logger log = LoggerFactory.getLogger(CheckInService.class);
-
-    private final StringRedisTemplate stringRedisTemplate;
-    private final CommunityService communityService;
-    private final CommunityMemberMapper communityMemberMapper;
-
-    public CheckInService(StringRedisTemplate stringRedisTemplate,
-                          CommunityService communityService,
-                          CommunityMemberMapper communityMemberMapper) {
-        this.stringRedisTemplate = stringRedisTemplate;
-        this.communityService = communityService;
-        this.communityMemberMapper = communityMemberMapper;
+    private final StringRedisTemplate redis;
+    private final CommunityService communities;
+    private final CommunityMemberMapper members;
+    private final CheckInRepository repository;
+    private final Clock clock;
+    public CheckInService(StringRedisTemplate redis, CommunityService communities, CommunityMemberMapper members,
+                          CheckInRepository repository, Clock clock) {
+        this.redis = redis; this.communities = communities; this.members = members; this.repository = repository; this.clock = clock;
     }
 
-    /**
-     * 执行社区签到
-     *
-     * @param communitySlug 社区标识
-     * @param currentUser   当前用户
-     * @return 签到结果
-     */
     @Transactional(rollbackFor = Exception.class)
-    public CheckInDtos.CheckInResponse checkIn(String communitySlug, CurrentUser currentUser) {
-        if (currentUser == null) {
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "未登录");
-        }
-
-        Community community = communityService.requireBySlug(communitySlug);
-        
-        Long count = communityMemberMapper.selectCount(new LambdaQueryWrapper<CommunityMember>()
-                .eq(CommunityMember::getCommunityId, community.getId())
-                .eq(CommunityMember::getUserId, currentUser.id()));
-                
+    public CheckInDtos.CheckInResponse checkIn(String slug, CurrentUser user) {
+        requireLogin(user);
+        // 在任何一致性读取前获取用户行锁，重复请求能读到前一次提交的签到与统计。
+        repository.lockUser(user.id());
+        Community community = communities.requireBySlug(slug);
+        Long count = members.selectCount(new LambdaQueryWrapper<CommunityMember>()
+                .eq(CommunityMember::getCommunityId, community.getId()).eq(CommunityMember::getUserId, user.id()));
         if (count == null || count == 0) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "NOT_JOINED", "请先加入该社区后再签到");
         }
-
-        LocalDate today = LocalDate.now();
-        String yearMonth = today.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        int dayOfMonth = today.getDayOfMonth();
-        
-        String key = CacheConstants.CHECKIN_KEY + communitySlug + ":" + currentUser.id() + ":" + yearMonth;
-        int offset = dayOfMonth - 1;
-        
-        try {
-            Boolean alreadyCheckedIn = stringRedisTemplate.opsForValue().getBit(key, offset);
-            if (Boolean.TRUE.equals(alreadyCheckedIn)) {
-                return new CheckInDtos.CheckInResponse(false, 0, 0, "今日已签到");
-            }
-            
-            stringRedisTemplate.opsForValue().setBit(key, offset, true);
-            stringRedisTemplate.expire(key, 45, TimeUnit.DAYS);
-            
-            // 获取总签到天数和连续签到天数
-            Long totalDaysLong = stringRedisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Long>) connection -> 
-                    connection.stringCommands().bitCount(key.getBytes()));
-            int totalDays = totalDaysLong != null ? totalDaysLong.intValue() : 1;
-            
-            int consecutiveDays = calculateConsecutiveDays(key, dayOfMonth);
-            
-            return new CheckInDtos.CheckInResponse(true, totalDays, consecutiveDays, "签到成功");
-        } catch (Exception e) {
-            log.error("Redis error during checkIn for user {} in community {}", currentUser.id(), communitySlug, e);
-            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "CHECKIN_FAILED", "签到失败，请稍后重试");
-        }
+        LocalDate today = LocalDate.now(clock);
+        boolean first = repository.insert(community.getId(), user.id(), today);
+        CheckInDtos.CheckInStats stats = stats(community.getId(), user.id(), YearMonth.from(today), today);
+        AfterCommit.run(() -> project(slug, user.id(), today));
+        return new CheckInDtos.CheckInResponse(first, stats.totalDays(), stats.consecutiveDays(), first ? "签到成功" : "今日已签到");
     }
 
-    /**
-     * 获取签到统计信息
-     *
-     * @param communitySlug 社区标识
-     * @param currentUser   当前用户
-     * @return 签到统计
-     */
-    public CheckInDtos.CheckInStats getStats(String communitySlug, CurrentUser currentUser) {
-        if (currentUser == null) {
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "未登录");
-        }
+    @Transactional(readOnly = true)
+    public CheckInDtos.CheckInStats getStats(String slug, CurrentUser user) { return getStats(slug, user, null); }
 
-        Community community = communityService.requireBySlug(communitySlug);
-
-        LocalDate today = LocalDate.now();
-        String yearMonth = today.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        int dayOfMonth = today.getDayOfMonth();
-        
-        String key = CacheConstants.CHECKIN_KEY + communitySlug + ":" + currentUser.id() + ":" + yearMonth;
-        
+    @Transactional(readOnly = true)
+    public CheckInDtos.CheckInStats getStats(String slug, CurrentUser user, String month) {
+        requireLogin(user);
+        Community community = communities.requireBySlug(slug);
+        LocalDate today = LocalDate.now(clock);
+        YearMonth selected;
         try {
-            Long totalDaysLong = stringRedisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Long>) connection -> 
-                    connection.stringCommands().bitCount(key.getBytes()));
-            int totalDays = totalDaysLong != null ? totalDaysLong.intValue() : 0;
-            
-            Boolean checkedToday = stringRedisTemplate.opsForValue().getBit(key, dayOfMonth - 1);
-            if (checkedToday == null) {
-                checkedToday = false;
-            }
-            
-            int consecutiveDays = calculateConsecutiveDays(key, dayOfMonth);
-            List<Integer> checkedDays = getCheckedDays(key, dayOfMonth);
-            
-            return new CheckInDtos.CheckInStats(totalDays, consecutiveDays, checkedToday, checkedDays);
-        } catch (Exception e) {
-            log.error("Redis error getting checkIn stats for user {} in community {}", currentUser.id(), communitySlug, e);
-            // 降级处理
-            return new CheckInDtos.CheckInStats(0, 0, false, new ArrayList<>());
+            selected = month == null ? YearMonth.from(today) : YearMonth.parse(month);
+            if (selected.getYear() < 1970 || selected.isAfter(YearMonth.from(today))) { throw new IllegalArgumentException(); }
+        } catch (Exception ex) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_CHECKIN_MONTH", "月份必须为 yyyy-MM，且不能晚于当前月份");
         }
+        return stats(community.getId(), user.id(), selected, today);
     }
 
-    /**
-     * 计算连续签到天数
-     */
-    private int calculateConsecutiveDays(String key, int todayDayOfMonth) {
-        try {
-            List<Long> results = stringRedisTemplate.opsForValue()
-                .bitField(key, BitFieldSubCommands.create()
-                    .get(BitFieldSubCommands.BitFieldType.unsigned(todayDayOfMonth)).valueAt(0));
-                    
-            if (results == null || results.isEmpty() || results.get(0) == null) {
-                return 0;
-            }
-            
-            long bits = results.get(0);
-            
-            // 若今日尚未签到，则检查昨日是否签到（若昨日签到则以昨日为基准展示连续天数，若昨日也未签到则断签重置为0）
-            if ((bits & 1) == 0) {
-                bits >>= 1;
-            }
-            
-            int count = 0;
-            while ((bits & 1) == 1) {
-                count++;
-                bits >>= 1;
-            }
-            return count;
-        } catch (Exception e) {
-            log.error("Error calculating consecutive check-in days for key {}", key, e);
-            return 0;
-        }
+    private CheckInDtos.CheckInStats stats(Long communityId, Long userId, YearMonth selected, LocalDate today) {
+        LocalDate asOf = selected.equals(YearMonth.from(today)) ? today : selected.atEndOfMonth();
+        List<LocalDate> dates = repository.dates(communityId, userId, selected.atDay(1), asOf);
+        boolean checkedToday = selected.equals(YearMonth.from(today)) && dates.contains(today);
+        return new CheckInDtos.CheckInStats(dates.size(), repository.consecutiveDays(communityId, userId, asOf),
+                checkedToday, dates.stream().map(LocalDate::getDayOfMonth).toList());
     }
 
-    /**
-     * 获取当月已签到的日期列表
-     */
-    private List<Integer> getCheckedDays(String key, int todayDayOfMonth) {
-        List<Integer> checkedDays = new ArrayList<>();
+    private void project(String slug, Long userId, LocalDate today) {
+        String key = CacheConstants.CHECKIN_KEY + slug + ":" + userId + ":" + today.format(DateTimeFormatter.ofPattern("yyyyMM"));
         try {
-            for (int i = 1; i <= todayDayOfMonth; i++) {
-                Boolean isSet = stringRedisTemplate.opsForValue().getBit(key, i - 1);
-                if (Boolean.TRUE.equals(isSet)) {
-                    checkedDays.add(i);
-                }
-            }
-        } catch (Exception e) {
-            log.error("Error getting checked days for key {}", key, e);
-        }
-        return checkedDays;
+            // SETBIT 原子返回旧值，但业务首次成功由数据库唯一约束决定。
+            redis.opsForValue().setBit(key, today.getDayOfMonth() - 1, true);
+            redis.expire(key, 45, TimeUnit.DAYS);
+        } catch (Exception ex) { log.warn("签到已提交，Redis 位图投影失败不影响历史与统计", ex); }
+    }
+
+    private static void requireLogin(CurrentUser user) {
+        if (user == null) { throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "未登录"); }
     }
 }

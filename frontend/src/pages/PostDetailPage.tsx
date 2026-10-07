@@ -183,7 +183,7 @@ export const PostDetailPage: React.FC<PostDetailPageProps> = ({ onRequireAuth })
           {post.viewCount !== undefined && post.viewCount > 0 && (
             <span className="inline-flex items-center gap-1 text-ink-muted dark:text-night-muted font-mono font-normal">
               <Eye className="w-3.5 h-3.5 text-ink-subtle" />
-              {post.viewCount} 次独立访客浏览
+              {post.viewCount} 位独立访客（近似）
             </span>
           )}
           <span>{post.type === 'ESSAY' ? '深度长文' : '社区探讨'} · {readingTime} 分钟阅读</span>

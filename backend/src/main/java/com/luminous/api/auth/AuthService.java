@@ -26,6 +26,7 @@ public class AuthService {
     private final UserFollowMapper userFollowMapper;
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final UserStatsCacheService userStatsCacheService;
+    private final com.luminous.api.feed.FeedService feedService;
 
     public AuthService(
             UserMapper userMapper,
@@ -34,7 +35,8 @@ public class AuthService {
             JwtService jwtService,
             UserFollowMapper userFollowMapper,
             org.springframework.context.ApplicationEventPublisher eventPublisher,
-            UserStatsCacheService userStatsCacheService
+            UserStatsCacheService userStatsCacheService,
+            @org.springframework.context.annotation.Lazy com.luminous.api.feed.FeedService feedService
     ) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
@@ -43,8 +45,10 @@ public class AuthService {
         this.userFollowMapper = userFollowMapper;
         this.eventPublisher = eventPublisher;
         this.userStatsCacheService = userStatsCacheService;
+        this.feedService = feedService;
     }
 
+    @Transactional
     public AuthDtos.AuthResponse register(AuthDtos.RegisterRequest request) {
         User existing = findByUsername(request.username());
         if (existing != null) {
@@ -60,9 +64,8 @@ public class AuthService {
         user.setBio(null);
         user.setJoinDate(LocalDate.now().getYear() + "年" + LocalDate.now().getMonthValue() + "月");
 
-        // 初始管理员机制：新数据库首次注册的第 1 位用户自动初始化为系统管理员 (ADMIN)
-        long totalUsers = userMapper.selectCount(null);
-        user.setRole(totalUsers == 0 ? "ADMIN" : "USER");
+        // 注册接口始终创建普通用户，管理员只能由受控初始化流程创建。
+        user.setRole("USER");
 
         user.setIsBanned(false);
         userMapper.insert(user);
@@ -157,6 +160,7 @@ public class AuthService {
             
             userStatsCacheService.incrementFollowerCount(target.getId());
             userStatsCacheService.incrementFollowingCount(currentUser.id());
+            com.luminous.api.common.AfterCommit.run(() -> feedService.invalidateInbox(currentUser.id()));
 
             // 异步发布关注通知事件给被关注者
             eventPublisher.publishEvent(new com.luminous.api.notification.NotificationEvent(
@@ -177,12 +181,15 @@ public class AuthService {
         User target = findByUsernameOrId(identifier);
         if (target == null) throw new BusinessException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         
-        userFollowMapper.delete(new LambdaQueryWrapper<UserFollow>()
+        int removed = userFollowMapper.delete(new LambdaQueryWrapper<UserFollow>()
                 .eq(UserFollow::getFollowerId, currentUser.id())
                 .eq(UserFollow::getFollowingId, target.getId()));
                 
-        userStatsCacheService.decrementFollowerCount(target.getId());
-        userStatsCacheService.decrementFollowingCount(currentUser.id());
+        if (removed > 0) {
+            userStatsCacheService.decrementFollowerCount(target.getId());
+            userStatsCacheService.decrementFollowingCount(currentUser.id());
+            com.luminous.api.common.AfterCommit.run(() -> feedService.invalidateInbox(currentUser.id()));
+        }
                 
         return toDto(target, currentUser);
     }

@@ -1,9 +1,8 @@
 package com.luminous.api.cache;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
+import com.luminous.api.common.AfterCommit;
+import com.luminous.api.common.BusinessException;
 import com.luminous.api.post.Post;
 import com.luminous.api.post.PostMapper;
 import org.redisson.api.RLock;
@@ -11,200 +10,125 @@ import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import java.util.concurrent.*;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.TimeUnit;
-
+/** 使用共享短缓存，避免多实例本地副本失效；回源按节点限流并合并同一帖子请求。 */
 @Service
 public class PostCacheService {
-
     private static final Logger log = LoggerFactory.getLogger(PostCacheService.class);
-    
-    private final StringRedisTemplate stringRedisTemplate;
-    private final RedissonClient redissonClient;
-    private final PostMapper postMapper;
-    private final ObjectMapper objectMapper;
-    
-    private final Cache<Long, Post> localCache;
+    private static final int MAX_DATABASE_LOADS = 8;
+    private final StringRedisTemplate redis;
+    private final RedissonClient redisson;
+    private final PostMapper posts;
+    private final ObjectMapper mapper;
+    private final Semaphore databaseSlots = new Semaphore(MAX_DATABASE_LOADS);
+    private final ConcurrentMap<Long, CompletableFuture<Post>> loading = new ConcurrentHashMap<>();
+    private volatile long redisRetryAfter;
 
-    public PostCacheService(StringRedisTemplate stringRedisTemplate,
-                            RedissonClient redissonClient,
-                            PostMapper postMapper,
-                            ObjectMapper objectMapper) {
-        this.stringRedisTemplate = stringRedisTemplate;
-        this.redissonClient = redissonClient;
-        this.postMapper = postMapper;
-        this.objectMapper = objectMapper.copy().findAndRegisterModules();
-        
-        this.localCache = Caffeine.newBuilder()
-                .maximumSize(500)
-                .expireAfterWrite(30, TimeUnit.SECONDS)
-                .build();
+    public PostCacheService(StringRedisTemplate redis, RedissonClient redisson, PostMapper posts, ObjectMapper mapper) {
+        this.redis = redis; this.redisson = redisson; this.posts = posts;
+        this.mapper = mapper.copy().findAndRegisterModules();
     }
 
-    /**
-     * Query post with three-level cache protection (penetration, avalanche, breakdown)
-     * 使用有界重试迭代循环代替无界递归，防止极端高并发下栈溢出
-     */
     public Post queryWithPassThrough(Long id) {
-        if (id == null) return null;
-
-        // L1: Check Caffeine local cache
-        Post post = localCache.getIfPresent(id);
-        if (post != null) {
-            return post;
-        }
-
-        String redisKey = CacheConstants.POST_DETAIL_KEY + id;
-        
-        // 最大重试 3 次以等待互斥锁重建缓存
-        for (int retry = 0; retry < 3; retry++) {
-            // L2: Check Redis
-            String json = null;
+        if (id == null) { return null; }
+        // 事务中的快照不能写入共享缓存；权限与写操作直接读取数据库。
+        boolean transactional = TransactionSynchronizationManager.isActualTransactionActive();
+        if (!transactional && redisAvailable()) {
             try {
-                json = stringRedisTemplate.opsForValue().get(redisKey);
-            } catch (Exception e) {
-                log.warn("Failed to get post {} from Redis", id, e);
-            }
-
-            if (json != null) {
-                if (json.isEmpty()) {
-                    // Penetration protection hit (空值缓存拦截)
-                    return null;
-                }
-                post = deserialize(json);
-                if (post != null) {
-                    localCache.put(id, post);
-                    return post;
-                }
-            }
-
-            // L3: Cache miss -> acquire Redisson lock to prevent cache breakdown
-            String lockKey = CacheConstants.LOCK_CACHE_REBUILD + id;
-            RLock lock = redissonClient.getLock(lockKey);
-            boolean isLockAcquired = false;
+                String cached = redis.opsForValue().get(CacheConstants.POST_DETAIL_KEY + id);
+                if (cached != null) { return cached.isEmpty() ? null : mapper.readValue(cached, Post.class); }
+            } catch (Exception ex) { redisFailed(ex); }
+        }
+        if (transactional) { return loadDatabase(id); }
+        CompletableFuture<Post> mine = new CompletableFuture<>();
+        CompletableFuture<Post> existing = loading.putIfAbsent(id, mine);
+        if (existing != null) {
             try {
-                isLockAcquired = lock.tryLock(2, 5, TimeUnit.SECONDS);
-                if (!isLockAcquired) {
-                    // 未获取到互斥锁，等待 50ms 后进入下一次循环尝试读取其他线程已重建好的缓存
-                    Thread.sleep(50);
-                    continue;
-                }
-
-                // Double check Redis after acquiring lock
-                try {
-                    json = stringRedisTemplate.opsForValue().get(redisKey);
-                } catch (Exception e) {
-                    log.warn("Failed to get post {} from Redis during double check", id, e);
-                }
-                if (json != null) {
-                    if (json.isEmpty()) {
-                        return null;
-                    }
-                    post = deserialize(json);
-                    if (post != null) {
-                        localCache.put(id, post);
-                        return post;
-                    }
-                }
-
-                // Query DB
-                post = postMapper.selectById(id);
-                if (post == null) {
-                    // Cache empty string to prevent penetration
-                    try {
-                        stringRedisTemplate.opsForValue().set(redisKey, "", CacheConstants.POST_DETAIL_NULL_TTL_MINUTES, TimeUnit.MINUTES);
-                    } catch (Exception e) {
-                        log.warn("Failed to cache null post {} in Redis", id, e);
-                    }
-                    return null;
-                }
-
-                // Cache in Redis with random TTL to prevent avalanche
-                cachePost(post);
-                // Put in L1 cache
-                localCache.put(id, post);
-                
-                return post;
-
-            } catch (InterruptedException e) {
-                log.error("Thread interrupted while waiting for lock", e);
-                Thread.currentThread().interrupt();
-                break;
-            } finally {
-                if (isLockAcquired && lock.isHeldByCurrentThread()) {
-                    lock.unlock();
-                }
-            }
+                Post result = existing.get(250, TimeUnit.MILLISECONDS);
+                // 返回副本，避免某个请求修改对象后影响其他等待者。
+                return result == null ? null : mapper.convertValue(result, Post.class);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt(); throw busy();
+            } catch (ExecutionException ex) {
+                if (ex.getCause() instanceof RuntimeException cause) { throw cause; }
+                throw busy();
+            } catch (TimeoutException ex) { throw busy(); }
         }
-
-        // 降级：重试耗尽直接回源数据库并返回
-        Post fallback = postMapper.selectById(id);
-        if (fallback != null) {
-            localCache.put(id, fallback);
-        }
-        return fallback;
+        try {
+            Post result = rebuild(id);
+            mine.complete(result);
+            return result == null ? null : mapper.convertValue(result, Post.class);
+        } catch (RuntimeException ex) { mine.completeExceptionally(ex); throw ex; }
+        finally { loading.remove(id, mine); }
     }
 
-    /**
-     * Delayed double delete strategy for invalidating cache
-     */
-    public void invalidatePost(Long id) {
-        String redisKey = CacheConstants.POST_DETAIL_KEY + id;
+    private Post rebuild(Long id) {
+        RLock lock = null;
+        boolean acquired = false;
         try {
-            stringRedisTemplate.delete(redisKey);
-        } catch (Exception e) {
-            log.warn("Failed to delete post {} from Redis", id, e);
-        }
-        
-        localCache.invalidate(id);
-        
-        CompletableFuture.delayedExecutor(500, TimeUnit.MILLISECONDS).execute(() -> {
-            try {
-                stringRedisTemplate.delete(redisKey);
-            } catch (Exception e) {
-                log.warn("Failed to delayed delete post {} from Redis", id, e);
+            if (redisAvailable()) {
+                try {
+                    lock = redisson.getLock(CacheConstants.LOCK_CACHE_REBUILD + id);
+                    acquired = lock.tryLock(100, 5000, TimeUnit.MILLISECONDS);
+                    String cached = redis.opsForValue().get(CacheConstants.POST_DETAIL_KEY + id);
+                    if (cached != null) { return cached.isEmpty() ? null : mapper.readValue(cached, Post.class); }
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt(); throw busy();
+                } catch (BusinessException ex) { throw ex; }
+                catch (Exception ex) { redisFailed(ex); }
             }
+            // 有效期从数据库读取前开始计算，防止慢查询在删除后写回一个全新的旧缓存。
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(CacheConstants.POST_DETAIL_TTL_SECONDS);
+            Post post = loadDatabase(id);
+            writeCache(id, post, deadline);
+            return post;
+        } finally {
+            if (acquired && lock != null) {
+                try { if (lock.isHeldByCurrentThread()) { lock.unlock(); } }
+                catch (Exception ex) { redisFailed(ex); }
+            }
+        }
+    }
+
+    private Post loadDatabase(Long id) {
+        if (!databaseSlots.tryAcquire()) { throw busy(); }
+        try { return posts.selectById(id); }
+        finally { databaseSlots.release(); }
+    }
+
+    private BusinessException busy() {
+        return new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "POST_SOURCE_BUSY", "帖子服务繁忙，请稍后重试");
+    }
+
+    public void invalidatePost(Long id) {
+        if (id == null) { return; }
+        AfterCommit.run(() -> {
+            try { redis.delete(CacheConstants.POST_DETAIL_KEY + id); }
+            catch (Exception ex) { redisFailed(ex); }
         });
     }
 
-    /**
-     * Cache post in Redis with random TTL
-     */
+    /** 预热仅触发重新读取，避免调用方持有的旧对象污染共享缓存。 */
     public void cachePost(Post post) {
-        if (post == null || post.getId() == null) {
-            return;
-        }
-        String redisKey = CacheConstants.POST_DETAIL_KEY + post.getId();
-        String json = serialize(post);
-        if (json != null) {
-            long randomMinutes = ThreadLocalRandom.current().nextLong(11); // 0 to 10
-            long ttl = CacheConstants.POST_DETAIL_TTL_MINUTES + randomMinutes;
-            try {
-                stringRedisTemplate.opsForValue().set(redisKey, json, ttl, TimeUnit.MINUTES);
-            } catch (Exception e) {
-                log.warn("Failed to cache post {} in Redis", post.getId(), e);
-            }
-        }
+        if (post != null && post.getId() != null) { queryWithPassThrough(post.getId()); }
     }
 
-    private String serialize(Post post) {
+    private void writeCache(Long id, Post post, long deadline) {
+        long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+        if (!redisAvailable() || remainingMillis <= 0) { return; }
         try {
-            return objectMapper.writeValueAsString(post);
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to serialize post {}", post.getId(), e);
-            return null;
-        }
+            redis.opsForValue().set(CacheConstants.POST_DETAIL_KEY + id,
+                    post == null ? "" : mapper.writeValueAsString(post), remainingMillis, TimeUnit.MILLISECONDS);
+        } catch (Exception ex) { redisFailed(ex); }
     }
 
-    private Post deserialize(String json) {
-        try {
-            return objectMapper.readValue(json, Post.class);
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to deserialize post", e);
-            return null;
-        }
+    private boolean redisAvailable() { return System.nanoTime() >= redisRetryAfter; }
+    private void redisFailed(Exception ex) {
+        redisRetryAfter = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        log.warn("共享缓存或锁不可用，短暂熔断并限制数据库回源", ex);
     }
 }

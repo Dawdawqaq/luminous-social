@@ -1,7 +1,9 @@
+import { createTestFetch } from './test-api-auth.mjs';
 // scripts/benchmark_suite.mjs
 // Luminous Full-Scope Benchmark & Stress Testing Suite (Targets luminous-dev :8080)
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8080/api';
+const testFetch = createTestFetch(BASE_URL);
 
 // Guard: Strict environment isolation check
 if (BASE_URL.includes(':80/') || BASE_URL.includes(':8088/') || BASE_URL.endsWith(':80') || BASE_URL.endsWith(':8088')) {
@@ -25,7 +27,7 @@ function calculatePercentiles(latencies) {
 async function request(url, options = {}) {
     const start = performance.now();
     try {
-        const res = await fetch(url, options);
+        const res = await testFetch(url, options);
         const duration = performance.now() - start;
         let body = null;
         try {
@@ -78,7 +80,7 @@ async function main() {
     const authorRes = await request(`${BASE_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Bypass-Rate-Limit': 'true' },
-        body: JSON.stringify({ username: 'bench_author', displayName: 'Bench Author', password: 'password123' })
+        body: JSON.stringify({ username: 'E2E_TEST_author', displayName: '[E2E_TEST] 压测作者', password: 'password123' })
     });
     const authorToken = authorRes.body?.data?.token;
     let token = authorToken;
@@ -87,7 +89,7 @@ async function main() {
         const loginRes = await request(`${BASE_URL}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Bypass-Rate-Limit': 'true' },
-            body: JSON.stringify({ username: 'bench_author', password: 'password123' })
+            body: JSON.stringify({ username: 'E2E_TEST_author', password: 'password123' })
         });
         token = loginRes.body?.data?.token;
     }
@@ -101,7 +103,7 @@ async function main() {
     await request(`${BASE_URL}/communities`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ slug: 'benchmark-lab', name: 'Benchmark Lab', description: '[BENCHMARK] Stress Testing Community' })
+        body: JSON.stringify({ slug: 'benchmark-lab', name: '[E2E_TEST] 压测社区', description: '[E2E_TEST] 压测社区' })
     });
 
     // Create target benchmark post
@@ -109,9 +111,9 @@ async function main() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
-            title: '[BENCHMARK] High-Concurrency Post for Stress Testing and ngram FullText Search',
-            content: 'Luminous platform high concurrency test content with keywords: spring-boot, mysql, redis, rocketmq and distributed lock evaluation.',
-            communityId: 'benchmark-lab',
+            title: '[E2E_TEST] 高并发与检索帖子',
+            content: '[E2E_TEST] spring-boot mysql redis rocketmq 检索内容',
+            community: 'benchmark-lab',
             type: 'standard'
         })
     });
@@ -125,14 +127,14 @@ async function main() {
         const reg = await request(`${BASE_URL}/auth/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Bypass-Rate-Limit': 'true' },
-            body: JSON.stringify({ username: `bench_voter_${i}`, displayName: `Voter ${i}`, password: 'password123' })
+            body: JSON.stringify({ username: `E2E_TEST_voter_${i}`, displayName: `[E2E_TEST] 投票用户 ${i}`, password: 'password123' })
         });
         let vToken = reg.body?.data?.token;
         if (!vToken) {
             const login = await request(`${BASE_URL}/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Bypass-Rate-Limit': 'true' },
-                body: JSON.stringify({ username: `bench_voter_${i}`, password: 'password123' })
+                body: JSON.stringify({ username: `E2E_TEST_voter_${i}`, password: 'password123' })
             });
             vToken = login.body?.data?.token;
         }
@@ -222,12 +224,12 @@ async function main() {
         const res = await request(`${BASE_URL}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: 'bench_author', password: 'password123' })
+            body: JSON.stringify({ username: 'E2E_TEST_author', password: 'password123' })
         });
-        if (res.status === 200) passCount++;
+        if (res.status === 200 || res.status === 400) passCount++;
         if (res.status === 429) rateLimitedCount++;
     }
-    console.log(`  Allowed Requests: ${passCount} | Rate-Limited (429): ${rateLimitedCount}`);
+    console.log(`  进入认证校验（200/400）: ${passCount} | Rate-Limited (429): ${rateLimitedCount}`);
     console.log(`  Rate Limiter Protection Status: ${rateLimitedCount > 0 ? '[PASS] 429 Circuit-Breaker Triggered' : '[WARN] Rate limit not exceeded'}\n`);
 
     console.log('===============================================================');

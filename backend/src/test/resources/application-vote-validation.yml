@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:vote_validation;MODE=MySQL;DB_CLOSE_DELAY=-1;NON_KEYWORDS=VALUE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: false
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:vote-validation-schema.sql
+  data:
+    redis:
+      host: 127.0.0.1
+      # 必须明确指定独立测试端口，避免误连共享 Redis。
+      port: ${VOTE_TEST_REDIS_PORT}
+      username: ""
+      password: ""
+app:
+  reliable-events:
+    dispatch-enabled: false
+  reconciliation:
+    cron: "-"
+  rocketmq:
+    enabled: false
+  upload:
+    recovery-enabled: false
+    dir: ./target/vote-validation-uploads

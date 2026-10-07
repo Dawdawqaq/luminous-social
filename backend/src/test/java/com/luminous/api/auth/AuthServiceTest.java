@@ -114,25 +114,23 @@ class AuthServiceTest {
     }
 
     @Test
-    void register_FirstUserBecomesAdmin() {
+    void register_FirstUserRemainsRegularUser() {
         when(userMapper.selectOne(any())).thenReturn(null);
-        when(userMapper.selectCount(null)).thenReturn(0L);
         when(passwordEncoder.encode("secret")).thenReturn("encoded_secret");
-        when(jwtService.createToken(any(), eq("admin_user"), eq("ADMIN"))).thenReturn("admin_token");
+        when(jwtService.createToken(any(), eq("admin_user"), eq("USER"))).thenReturn("admin_token");
 
         AuthDtos.RegisterRequest request = new AuthDtos.RegisterRequest("admin_user", "Admin User", "secret");
         AuthDtos.AuthResponse response = authService.register(request);
 
         assertThat(response.token()).isEqualTo("admin_token");
         assertThat(response.user().username()).isEqualTo("admin_user");
-        assertThat(response.user().role()).isEqualTo("ADMIN");
+        assertThat(response.user().role()).isEqualTo("USER");
         verify(userMapper).insert(any(User.class));
     }
 
     @Test
     void register_SubsequentUserBecomesRegularUser() {
         when(userMapper.selectOne(any())).thenReturn(null);
-        when(userMapper.selectCount(null)).thenReturn(1L);
         when(passwordEncoder.encode("secret")).thenReturn("encoded_secret");
         when(jwtService.createToken(any(), eq("regular_user"), eq("USER"))).thenReturn("regular_token");
 

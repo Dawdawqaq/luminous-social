@@ -1,70 +1,63 @@
 package com.luminous.api.upload;
 
-import com.luminous.api.common.SnowflakeIdGenerator;
-import com.luminous.api.common.BusinessException;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.luminous.api.common.*;
 import com.luminous.api.security.CurrentUser;
-import com.luminous.api.storage.StorageProvider;
+import com.luminous.api.storage.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class UploadService {
     private static final Logger log = LoggerFactory.getLogger(UploadService.class);
-
-    private final UploadedFileMapper uploadedFileMapper;
-    private final StorageProvider storageProvider;
-    private final String publicBaseUrl;
-
-    public UploadService(
-            UploadedFileMapper uploadedFileMapper,
-            StorageProvider storageProvider,
-            @Value("${app.public-base-url}") String publicBaseUrl
-    ) {
-        this.uploadedFileMapper = uploadedFileMapper;
-        this.storageProvider = storageProvider;
-        this.publicBaseUrl = publicBaseUrl;
+    private final UploadedFileMapper files;
+    private final StorageProvider storage;
+    private final UploadOperationService operations;
+    public UploadService(UploadedFileMapper files, StorageProvider storage, UploadOperationService operations) {
+        this.files = files; this.storage = storage; this.operations = operations;
     }
-
-    public UploadDtos.UploadResponse uploadImage(MultipartFile file, CurrentUser currentUser) {
-        if (currentUser == null) {
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "您需要先登录才能上传文件");
-        }
-        if (file == null || file.isEmpty()) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "EMPTY_FILE", "上传文件不能为空");
-        }
-
+    @Transactional(timeout = 60)
+    public UploadDtos.UploadResponse uploadImage(MultipartFile file, CurrentUser user) {
+        if (user == null) { throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录"); }
+        StorageProvider.PlannedFile planned = storage.plan(file);
+        long operation = operations.prepare(planned);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCompletion(int status) {
+                if (status != STATUS_COMMITTED) {
+                    try { operations.cleanup(operation); }
+                    catch (Exception ex) { log.warn("即时文件补偿失败，持久意图等待重试，id={}", operation, ex); }
+                }
+            }
+        });
         try {
-            String originalName = file.getOriginalFilename() == null ? "image" : file.getOriginalFilename();
-            String storedPathOrUrl = storageProvider.store(file);
-            String fullUrl = storedPathOrUrl.startsWith("http://") || storedPathOrUrl.startsWith("https://")
-                    ? storedPathOrUrl
-                    : publicBaseUrl + storedPathOrUrl;
-
-            String storedName = storedPathOrUrl.contains("/") 
-                    ? storedPathOrUrl.substring(storedPathOrUrl.lastIndexOf('/') + 1)
-                    : storedPathOrUrl;
-
-            UploadedFile uploadedFile = new UploadedFile();
-            uploadedFile.setId(SnowflakeIdGenerator.getNextId());
-            uploadedFile.setUserId(currentUser.id());
-            uploadedFile.setOriginalName(originalName);
-            uploadedFile.setStoredName(storedName);
-            uploadedFile.setUrl(fullUrl);
-            uploadedFile.setContentType(file.getContentType());
-            uploadedFile.setSizeBytes(file.getSize());
-            uploadedFileMapper.insert(uploadedFile);
-
-            log.info("User {} uploaded file: {} -> {}", currentUser.username(), originalName, fullUrl);
-            return new UploadDtos.UploadResponse(String.valueOf(uploadedFile.getId()), fullUrl, originalName, file.getSize());
-        } catch (BusinessException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            log.error("Failed to process file upload for user: {}", currentUser.username(), ex);
-            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "UPLOAD_FAILED", "图片上传失败");
+            storage.store(planned, file);
+            UploadedFile record = new UploadedFile(); record.setId(SnowflakeIdGenerator.getNextId()); record.setUserId(user.id());
+            record.setOriginalName(file.getOriginalFilename() == null ? "image" : file.getOriginalFilename());
+            record.setStoredName(planned.key()); record.setUrl(planned.url()); record.setContentType(planned.contentType());
+            record.setSizeBytes(planned.size()); record.setStorageType(planned.storageType()); record.setReadTokenHash(planned.readTokenHash());
+            if (files.insert(record) != 1) { throw new IllegalStateException("文件记录未写入"); }
+            operations.committed(operation);
+            return new UploadDtos.UploadResponse(String.valueOf(record.getId()), planned.url(), record.getOriginalName(), planned.size());
+        } catch (BusinessException ex) { throw ex; }
+        catch (Exception ex) {
+            log.warn("上传事务失败，补偿意图编号={}", operation, ex);
+            throw new BusinessException(HttpStatus.INTERNAL_SERVER_ERROR, "UPLOAD_FAILED", "图片上传失败，未提交的文件将被清理");
         }
+    }
+    public UploadedFile authorizeRead(String key, String token, CurrentUser user) {
+        try { FileAccessTokens.requireKey(key); }
+        catch (IllegalArgumentException ex) { throw new BusinessException(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "文件不存在"); }
+        UploadedFile file = files.selectOne(new LambdaQueryWrapper<UploadedFile>().eq(UploadedFile::getStoredName, key));
+        if (file == null) { throw new BusinessException(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "文件不存在"); }
+        boolean owner = user != null && (file.getUserId().equals(user.id()) || "ADMIN".equals(user.role()));
+        if (!owner && !FileAccessTokens.matches(token, file.getReadTokenHash())) {
+            throw new BusinessException(HttpStatus.FORBIDDEN, "FILE_FORBIDDEN", "文件访问凭证无效");
+        }
+        return file;
     }
 }

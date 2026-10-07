@@ -4,7 +4,7 @@ import { Plus, Sun, Moon, Bell, LogIn, LogOut, User, Bookmark, Shield } from 'lu
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { Avatar } from '../ui/Avatar';
-import { notificationApi } from '../../api/client';
+import { useNotifications } from '../../context/NotificationContext';
 import { HeaderSearch } from '../search/HeaderSearch';
 
 interface NavbarProps {
@@ -23,18 +23,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
-  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const { unreadCount, refresh: refreshNotifications } = useNotifications();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      notificationApi.getUnreadCount().then((res) => {
-        setUnreadCount(res.unreadCount || 0);
-      }).catch(() => {});
-    } else {
-      setUnreadCount(0);
-    }
-  }, [isAuthenticated, location.pathname]);
+  useEffect(() => { if (isAuthenticated) void refreshNotifications(); }, [isAuthenticated, location.pathname, refreshNotifications]);
 
   const navLinks = [
     { label: '全部帖子', path: '/', exact: true },

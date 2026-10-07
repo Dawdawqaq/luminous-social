@@ -42,6 +42,9 @@ class NotificationServiceTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
+    @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     @InjectMocks
     private NotificationService notificationService;
 
@@ -65,9 +68,7 @@ class NotificationServiceTest {
 
     @Test
     void handleEvent_LikeDebounce_IgnoredWhenDuplicate() {
-        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.setIfAbsent(startsWith("debouncing:like:"), eq("1"), any(Duration.class)))
-                .thenReturn(false);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         NotificationEvent duplicateLike = new NotificationEvent(
                 1002L, 1001L, "LIKE_POST", "POST", 2001L, "Post Title"
@@ -80,9 +81,7 @@ class NotificationServiceTest {
 
     @Test
     void handleEvent_Success_WhenNewEvent() {
-        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.setIfAbsent(startsWith("debouncing:like:"), eq("1"), any(Duration.class)))
-                .thenReturn(true);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(0L);
 
         NotificationEvent newLike = new NotificationEvent(
                 1002L, 1001L, "LIKE_POST", "POST", 2001L, "Post Title"

@@ -1,4 +1,6 @@
 server:
+  # 代理头由显式可信代理解析器处理，避免框架提前信任客户端输入。
+  forward-headers-strategy: none
   port: ${SERVER_PORT:8080}
 
 spring:
@@ -13,6 +15,8 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
       timeout: 3000ms
   flyway:
     enabled: true
@@ -30,6 +34,21 @@ mybatis-plus:
       id-type: assign_id
 
 app:
+  security:
+    trusted-proxies: ${TRUSTED_PROXIES:}
+    secure-cookies: ${SECURE_COOKIES:false}
+  bootstrap:
+    username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+    display-name: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:管理员}
+  idempotency:
+    retention-seconds: ${IDEMPOTENCY_RETENTION_SECONDS:86400}
+  checkin:
+    # 首次升级可显式导入仍存活的旧签到位图，成功后关闭开关。
+    import-legacy-history: ${CHECKIN_IMPORT_LEGACY_HISTORY:false}
+  snowflake:
+    worker-id: ${SNOWFLAKE_WORKER_ID:1}
+    datacenter-id: ${SNOWFLAKE_DATACENTER_ID:1}
   jwt:
     secret: ${JWT_SECRET:change-this-development-secret-change-this-development-secret}
     expiration-minutes: ${JWT_EXPIRATION_MINUTES:1440}
@@ -39,6 +58,7 @@ app:
     type: ${STORAGE_TYPE:local} # local | minio
     minio:
       endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+      public-endpoint: ${MINIO_PUBLIC_ENDPOINT:${APP_PUBLIC_BASE_URL:http://localhost:8080}}
       access-key: ${MINIO_ACCESS_KEY:minioadmin}
       secret-key: ${MINIO_SECRET_KEY:minioadmin-local}
       bucket: ${MINIO_BUCKET:luminous-uploads}

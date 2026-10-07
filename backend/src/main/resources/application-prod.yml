@@ -1,0 +1,8 @@
+app:
+  snowflake:
+    # 多实例必须显式分配节点，禁止静默使用开发环境默认值。
+    worker-id: ${SNOWFLAKE_WORKER_ID}
+    datacenter-id: ${SNOWFLAKE_DATACENTER_ID}
+  jwt:
+    # 生产节点统一显式注入密钥，不使用开发环境默认值。
+    secret: ${JWT_SECRET}

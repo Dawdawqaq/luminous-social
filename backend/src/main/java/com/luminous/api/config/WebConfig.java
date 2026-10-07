@@ -23,7 +23,14 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         String location = Path.of(uploadDir).toAbsolutePath().normalize().toUri().toString();
-        registry.addResourceHandler("/uploads/**").addResourceLocations(location + "/");
+        registry.addResourceHandler("/uploads/**").addResourceLocations(location + "/").resourceChain(true)
+                .addResolver(new org.springframework.web.servlet.resource.PathResourceResolver() {
+                    @Override protected org.springframework.core.io.Resource getResource(String path, org.springframework.core.io.Resource root) throws java.io.IOException {
+                        // 仅保留历史根目录图片，禁止静态入口读取新的 private 子目录。
+                        if (!path.matches("[0-9]{1,19}\\.(jpg|png|webp|gif)")) { return null; }
+                        return super.getResource(path, root);
+                    }
+                });
     }
 
     @Override

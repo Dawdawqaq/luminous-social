@@ -1,90 +1,66 @@
 package com.luminous.api.checkin;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.luminous.api.community.*;
 import com.luminous.api.common.BusinessException;
-import com.luminous.api.community.Community;
-import com.luminous.api.community.CommunityMemberMapper;
-import com.luminous.api.community.CommunityService;
 import com.luminous.api.security.CurrentUser;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-
-import java.util.concurrent.TimeUnit;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import java.time.*;
+import java.util.List;
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CheckInServiceTest {
-
-    @Mock
-    private StringRedisTemplate stringRedisTemplate;
-
-    @Mock
-    private ValueOperations<String, String> valueOperations;
-
-    @Mock
-    private CommunityService communityService;
-
-    @Mock
-    private CommunityMemberMapper communityMemberMapper;
-
-    private CheckInService checkInService;
-    private CurrentUser currentUser;
-    private Community sampleCommunity;
-
-    @BeforeEach
-    void setUp() {
-        lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
-        checkInService = new CheckInService(stringRedisTemplate, communityService, communityMemberMapper);
-        currentUser = new CurrentUser(100L, "test_user", "USER");
-
-        sampleCommunity = new Community();
-        sampleCommunity.setId(10L);
-        sampleCommunity.setSlug("design");
-        sampleCommunity.setName("Design");
+    @Mock StringRedisTemplate redis;
+    @Mock ValueOperations<String, String> values;
+    @Mock CommunityService communities;
+    @Mock CommunityMemberMapper members;
+    @Mock CheckInRepository repository;
+    CheckInService service;
+    CurrentUser user = new CurrentUser(100L, "test_user", "USER");
+    LocalDate today = LocalDate.of(2026, 10, 1);
+    @BeforeEach void setUp() {
+        Community community = new Community(); community.setId(10L);
+        lenient().when(communities.requireBySlug("design")).thenReturn(community);
+        lenient().when(redis.opsForValue()).thenReturn(values);
+        service = new CheckInService(redis, communities, members, repository,
+                Clock.fixed(Instant.parse("2026-09-30T16:00:00Z"), ZoneId.of("Asia/Shanghai")));
     }
-
-    @Test
-    void checkIn_Fails_WhenUserNotJoined() {
-        when(communityService.requireBySlug("design")).thenReturn(sampleCommunity);
-        when(communityMemberMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(0L);
-
-        assertThatThrownBy(() -> checkInService.checkIn("design", currentUser))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("请先加入该社区后再签到");
+    @Test void nonMemberCannotCheckIn() {
+        when(members.selectCount(any())).thenReturn(0L);
+        assertThatThrownBy(() -> service.checkIn("design", user)).isInstanceOf(BusinessException.class);
+        verify(repository, never()).insert(anyLong(), anyLong(), any());
     }
-
-    @Test
-    void checkIn_Succeeds_WhenJoinedAndFirstCheckIn() {
-        when(communityService.requireBySlug("design")).thenReturn(sampleCommunity);
-        when(communityMemberMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
-        when(valueOperations.getBit(anyString(), anyLong())).thenReturn(false);
-
-        CheckInDtos.CheckInResponse response = checkInService.checkIn("design", currentUser);
-
-        assertThat(response.success()).isTrue();
-        verify(valueOperations).setBit(anyString(), anyLong(), eq(true));
-        verify(stringRedisTemplate).expire(anyString(), eq(45L), eq(TimeUnit.DAYS));
+    @Test void firstCheckInSurvivesRedisFailureAndUsesShanghaiDate() {
+        when(members.selectCount(any())).thenReturn(1L);
+        when(repository.insert(10L, 100L, today)).thenReturn(true);
+        when(repository.dates(10L, 100L, today, today)).thenReturn(List.of(today));
+        when(repository.consecutiveDays(10L, 100L, today)).thenReturn(3);
+        when(values.setBit(anyString(), anyLong(), eq(true))).thenThrow(new IllegalStateException("Redis 不可用"));
+        var result = service.checkIn("design", user);
+        assertThat(result.success()).isTrue();
+        assertThat(result.totalDays()).isEqualTo(1);
+        assertThat(result.consecutiveDays()).isEqualTo(3);
+        verify(values).setBit(contains("202610"), eq(0L), eq(true));
     }
-
-    @Test
-    void checkIn_ReturnsAlreadyChecked_WhenBitAlreadySet() {
-        when(communityService.requireBySlug("design")).thenReturn(sampleCommunity);
-        when(communityMemberMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
-        when(valueOperations.getBit(anyString(), anyLong())).thenReturn(true);
-
-        CheckInDtos.CheckInResponse response = checkInService.checkIn("design", currentUser);
-
-        assertThat(response.success()).isFalse();
-        assertThat(response.message()).isEqualTo("今日已签到");
-        verify(valueOperations, never()).setBit(anyString(), anyLong(), eq(true));
+    @Test void duplicateReturnsRealStatistics() {
+        when(members.selectCount(any())).thenReturn(1L);
+        when(repository.insert(10L, 100L, today)).thenReturn(false);
+        when(repository.dates(10L, 100L, today, today)).thenReturn(List.of(today));
+        when(repository.consecutiveDays(10L, 100L, today)).thenReturn(31);
+        var result = service.checkIn("design", user);
+        assertThat(result.success()).isFalse();
+        assertThat(result.totalDays()).isEqualTo(1);
+        assertThat(result.consecutiveDays()).isEqualTo(31);
+    }
+    @Test void invalidMonthRejected() {
+        assertThatThrownBy(() -> service.getStats("design", user, "2026-11")).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.getStats("design", user, "2026-9")).isInstanceOf(BusinessException.class);
     }
 }

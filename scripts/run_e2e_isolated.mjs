@@ -1,7 +1,9 @@
+import { createTestFetch } from './test-api-auth.mjs';
 // scripts/run_e2e_isolated.mjs
 // Luminous 独立测试环境 E2E 契约测试与数据生命周期管理引擎
 
 const TARGET_API = process.env.E2E_TARGET_API || 'http://localhost:8080/api';
+const testFetch = createTestFetch(TARGET_API);
 const E2E_PREFIX = '[E2E_TEST]';
 
 // [FATAL GUARD] 核心容器安全红线：严禁向生产环境注入自动化测试流量
@@ -32,7 +34,7 @@ async function api(endpoint, options = {}) {
     'X-Bypass-Rate-Limit': 'true',
     ...(options.headers || {}),
   };
-  const res = await fetch(`${TARGET_API}${endpoint}`, {
+  const res = await testFetch(`${TARGET_API}${endpoint}`, {
     ...options,
     headers,
   });

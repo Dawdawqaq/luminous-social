@@ -62,8 +62,8 @@ public class SnowflakeIdGenerator {
     private long lastTimestamp = -1L;
 
     public SnowflakeIdGenerator(
-            @Value("${app.snowflake.worker-id:1}") long workerId,
-            @Value("${app.snowflake.datacenter-id:1}") long datacenterId
+            @Value("${app.snowflake.worker-id}") long workerId,
+            @Value("${app.snowflake.datacenter-id}") long datacenterId
     ) {
         if (workerId > MAX_WORKER_ID || workerId < 0) {
             throw new IllegalArgumentException(String.format("Worker Id can't be greater than %d or less than 0", MAX_WORKER_ID));
@@ -85,6 +85,14 @@ public class SnowflakeIdGenerator {
             return instance.nextId();
         }
         return System.currentTimeMillis();
+    }
+
+    long getWorkerId() {
+        return workerId;
+    }
+
+    long getDatacenterId() {
+        return datacenterId;
     }
 
     /**

@@ -35,7 +35,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             try {
                 CurrentUser currentUser = jwtService.parse(header.substring(7));
                 
-                // 实时黑名单校验（毫秒级阻断被封禁用户）
+                // 数据库封禁状态是认证依据，Redis 缓存故障不能放行封禁账号
                 if (tokenBlacklistService.isUserBanned(currentUser.id())) {
                     SecurityContextHolder.clearContext();
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -53,6 +53,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         AuthorityUtils.createAuthorityList(authority)
                 );
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+            } catch (com.luminous.api.common.BusinessException ex) {
+                SecurityContextHolder.clearContext(); response.setStatus(ex.getStatus().value());
+                response.setContentType(MediaType.APPLICATION_JSON_VALUE + ";charset=UTF-8");
+                response.getWriter().write(objectMapper.writeValueAsString(ApiResponse.fail(ex.getCode(), ex.getMessage())));
+                return;
             } catch (RuntimeException ignored) {
                 SecurityContextHolder.clearContext();
             }

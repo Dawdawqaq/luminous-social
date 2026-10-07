@@ -73,7 +73,7 @@ public class CacheAndConcurrencyStressTest {
         communityService.create(new CommunityDtos.CreateCommunityRequest(communitySlug, "Concurrency Lab", "Tech", "Stress test lab"), author);
 
         // Create Post
-        targetPost = postService.create(new PostDtos.CreatePostRequest(communitySlug, "High Concurrency Test Post", "Testing concurrent voting & locks", null, true), author);
+        targetPost = postService.create(new PostDtos.CreatePostRequest(communitySlug, "High Concurrency Test Post", "Testing concurrent voting & locks", null, null, true), author);
 
         // Register 40 voters
         for (int i = 0; i < 40; i++) {
@@ -135,7 +135,7 @@ public class CacheAndConcurrencyStressTest {
         assertThat(postInDb.getVotes()).isEqualTo(threadCount);
 
         // Redis cache verification
-        String redisVotes = redisTemplate.opsForValue().get("stat:post:votes:" + postId);
+        String redisVotes = redisTemplate.opsForValue().get("luminous:stat:post:votes:" + postId);
         assertThat(redisVotes).isEqualTo(String.valueOf(threadCount));
     }
 

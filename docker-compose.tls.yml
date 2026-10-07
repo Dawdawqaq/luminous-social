@@ -1,0 +1,16 @@
+# 显式启用 TLS 时叠加；需要真实证书与 HTTPS 公开地址，不生成或替换生产证书。
+services:
+  nginx-lb:
+    ports: !override
+      - "${PROD_HTTP_PORT:-80}:80"
+      - "443:443"
+    volumes: !override
+      - ./nginx/nginx.prod.tls.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_CERT_FILE:?请配置证书文件}:/etc/nginx/tls/fullchain.pem:ro
+      - ${TLS_KEY_FILE:?请配置证书私钥文件}:/etc/nginx/tls/privkey.pem:ro
+  backend:
+    environment:
+      SECURE_COOKIES: "true"
+  backend-2:
+    environment:
+      SECURE_COOKIES: "true"

@@ -1,3 +1,5 @@
+import { notificationsChanged } from '../notification/notificationEvents';
+import { OperationCoordinator, operationFingerprint, operationGroup } from './operationCoordinator';
 import { ApiResponse, PageResponse, Post, Comment, Community, RecommendedCommunity, User, Notification, AdminUser, ScrollResult, CheckInResponse, CheckInStats } from '../types';
 
 const API_BASE = '/api';
@@ -14,12 +16,11 @@ export class ApiError extends Error {
   }
 }
 
-function generateIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+function operationStorage(): Storage | undefined {
+  try { return globalThis.sessionStorage; }
+  catch { return undefined; }
 }
+const writeOperations = new OperationCoordinator(operationStorage());
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('luminous_token');
@@ -35,12 +36,16 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // 为写操作自动附加幂等 Token (如果调用方未显式设置)
   const method = (options.method || 'GET').toUpperCase();
-  if (['POST', 'PUT', 'DELETE'].includes(method) && !headers['X-Idempotency-Key']) {
-    headers['X-Idempotency-Key'] = generateIdempotencyKey();
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method) && !endpoint.startsWith('/auth/captcha') && !headers['X-Idempotency-Key']) {
+    const fingerprint = await operationFingerprint(token || 'anonymous', endpoint, method, options.body, headers['X-Captcha-Proof']);
+    const group = await operationGroup(token || 'anonymous', endpoint);
+    return writeOperations.run(fingerprint, key => sendRequest<T>(endpoint, options, { ...headers, 'X-Idempotency-Key': key }), group, endpoint !== '/notifications/read-all');
   }
+  return sendRequest<T>(endpoint, options, headers);
+}
 
+async function sendRequest<T>(endpoint: string, options: RequestInit, headers: Record<string, string>): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers,
@@ -69,15 +74,17 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 }
 
 export const authApi = {
-  login: (data: { username: string; password: string }) =>
+  login: (data: { username: string; password: string }, captchaProof: string) =>
     request<{ token: string; user: User }>('/auth/login', {
       method: 'POST',
+      headers: { 'X-Captcha-Proof': captchaProof },
       body: JSON.stringify(data),
     }),
 
-  register: (data: { username: string; displayName: string; password: string }) =>
+  register: (data: { username: string; displayName: string; password: string }, captchaProof: string) =>
     request<{ token: string; user: User }>('/auth/register', {
       method: 'POST',
+      headers: { 'X-Captcha-Proof': captchaProof },
       body: JSON.stringify(data),
     }),
 
@@ -210,8 +217,8 @@ export const communityApi = {
 };
 
 export const notificationApi = {
-  getUnreadCount: () =>
-    request<{ unreadCount: number }>('/notifications/unread-count'),
+  getUnreadCount: (signal?: AbortSignal) =>
+    request<{ unreadCount: number }>('/notifications/unread-count', { signal }),
 
   list: (params: { page?: number; size?: number; type?: string } = {}) => {
     const query = new URLSearchParams();
@@ -224,17 +231,17 @@ export const notificationApi = {
   markAsRead: (id: string | number) =>
     request<void>(`/notifications/${id}/read`, {
       method: 'PUT',
-    }),
+    }).then(result => { notificationsChanged(); return result; }),
 
   markAllAsRead: () =>
     request<{ markedCount: number }>('/notifications/read-all', {
       method: 'PUT',
-    }),
+    }).then(result => { notificationsChanged(); return result; }),
 
   delete: (id: string | number) =>
     request<void>(`/notifications/${id}`, {
       method: 'DELETE',
-    }),
+    }).then(result => { notificationsChanged(); return result; }),
 };
 
 export const uploadApi = {
@@ -276,6 +283,28 @@ export const checkInApi = {
       method: 'POST',
     }),
 
-  getStats: (communitySlug: string) =>
-    request<CheckInStats>(`/checkin/${encodeURIComponent(communitySlug)}/stats`),
+  getStats: (communitySlug: string, month?: string) =>
+    request<CheckInStats>(`/checkin/${encodeURIComponent(communitySlug)}/stats${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+};
+
+export interface CaptchaChallenge {
+  challengeId: string;
+  image: string;
+  piece: string;
+  width: number;
+  height: number;
+  pieceSize: number;
+  pieceY: number;
+  expiresIn: number;
+}
+// 顺序获取挑战，避免首次打开时并发响应设置不同浏览器会话 Cookie。
+let challengeQueue: Promise<unknown> = Promise.resolve();
+export const captchaApi = {
+  challenge: (purpose: 'login' | 'register') => {
+    const next = challengeQueue.catch(() => undefined).then(() => request<CaptchaChallenge>(`/auth/captcha?purpose=${purpose}`));
+    challengeQueue = next;
+    return next;
+  },
+  verify: (data: { purpose: 'login' | 'register'; challengeId: string; offset: number; durationMillis: number }) =>
+    request<{ proof: string; expiresIn: number }>('/auth/captcha/verify', { method: 'POST', body: JSON.stringify(data) }),
 };

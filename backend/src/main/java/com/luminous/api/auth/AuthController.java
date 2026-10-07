@@ -15,20 +15,30 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/auth")
 public class AuthController {
     private final AuthService authService;
+    private final com.luminous.api.security.CaptchaService captcha;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, com.luminous.api.security.CaptchaService captcha) {
         this.authService = authService;
+        this.captcha = captcha;
     }
 
     @Operation(summary = "注册账号")
+    @com.luminous.api.security.Idempotent
     @PostMapping("/register")
-    public ApiResponse<AuthDtos.AuthResponse> register(@Valid @RequestBody AuthDtos.RegisterRequest request) {
+    public ApiResponse<AuthDtos.AuthResponse> register(@Valid @RequestBody AuthDtos.RegisterRequest request,
+            jakarta.servlet.http.HttpServletRequest servletRequest, @org.springframework.web.bind.annotation.RequestHeader(value = "X-Captcha-Proof", required = false) String proof) {
+        captcha.consume(com.luminous.api.security.CaptchaSessionIdentity.find(servletRequest), "register", proof,
+                (com.luminous.api.security.IdempotencyContext) servletRequest.getAttribute(com.luminous.api.security.IdempotencyContext.REQUEST_ATTRIBUTE));
         return ApiResponse.ok(authService.register(request));
     }
 
     @Operation(summary = "登录并获取 JWT")
+    @com.luminous.api.security.Idempotent
     @PostMapping("/login")
-    public ApiResponse<AuthDtos.AuthResponse> login(@Valid @RequestBody AuthDtos.LoginRequest request) {
+    public ApiResponse<AuthDtos.AuthResponse> login(@Valid @RequestBody AuthDtos.LoginRequest request,
+            jakarta.servlet.http.HttpServletRequest servletRequest, @org.springframework.web.bind.annotation.RequestHeader(value = "X-Captcha-Proof", required = false) String proof) {
+        captcha.consume(com.luminous.api.security.CaptchaSessionIdentity.find(servletRequest), "login", proof,
+                (com.luminous.api.security.IdempotencyContext) servletRequest.getAttribute(com.luminous.api.security.IdempotencyContext.REQUEST_ATTRIBUTE));
         return ApiResponse.ok(authService.login(request));
     }
 

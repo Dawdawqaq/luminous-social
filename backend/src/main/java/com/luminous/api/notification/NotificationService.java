@@ -11,12 +11,10 @@ import com.luminous.api.common.PageResponse;
 import com.luminous.api.security.CurrentUser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -30,19 +28,17 @@ public class NotificationService {
 
     private final NotificationMapper notificationMapper;
     private final UserMapper userMapper;
-    private final StringRedisTemplate stringRedisTemplate;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
-    private static final String LIKE_DEBOUNCE_PREFIX = "debouncing:like:";
-    private static final Duration LIKE_DEBOUNCE_TTL = Duration.ofMinutes(5);
 
     public NotificationService(
             NotificationMapper notificationMapper,
             UserMapper userMapper,
-            StringRedisTemplate stringRedisTemplate
+            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate
     ) {
         this.notificationMapper = notificationMapper;
         this.userMapper = userMapper;
-        this.stringRedisTemplate = stringRedisTemplate;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Transactional
@@ -57,18 +53,13 @@ public class NotificationService {
             return;
         }
 
-        // 2. 点赞防抖与防刷限制：5 分钟内同一帖子重复点赞不重复通知
+        // 事务内锁定接收者并按已提交的通知防抖，失败回滚后不会留下 Redis 拦截标记。
+        jdbcTemplate.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class, event.receiverId());
         if ("LIKE_POST".equals(event.type())) {
-            String debounceKey = LIKE_DEBOUNCE_PREFIX + event.actorId() + ":" + event.targetId();
-            try {
-                Boolean isFirst = stringRedisTemplate.opsForValue().setIfAbsent(debounceKey, "1", LIKE_DEBOUNCE_TTL);
-                if (Boolean.FALSE.equals(isFirst)) {
-                    log.debug("Duplicate like notification debounced for key: {}", debounceKey);
-                    return;
-                }
-            } catch (Exception e) {
-                log.warn("Redis debounce check failed, proceeding with DB insert: {}", e.getMessage());
-            }
+            Long recent = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM notifications WHERE receiver_id=? AND actor_id=? "
+                    + "AND target_type=? AND target_id=? AND type='LIKE_POST' AND created_at>=?", Long.class,
+                    event.receiverId(), event.actorId(), event.targetType(), event.targetId(), LocalDateTime.now().minusMinutes(5));
+            if (recent != null && recent > 0) { return; }
         }
 
         // 3. 落库持久化
@@ -98,6 +89,7 @@ public class NotificationService {
     }
 
     public PageResponse<NotificationDtos.NotificationDto> list(long page, long size, String type, CurrentUser currentUser) {
+        com.luminous.api.common.PaginationPolicy.validate(page, size);
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录后查看通知中心");
         }
@@ -117,7 +109,7 @@ public class NotificationService {
             }
         }
 
-        wrapper.orderByDesc(Notification::getCreatedAt);
+        wrapper.orderByDesc(Notification::getCreatedAt).orderByDesc(Notification::getId);
 
         IPage<Notification> notificationPage = notificationMapper.selectPage(new Page<>(page, size), wrapper);
         List<Notification> records = notificationPage.getRecords();

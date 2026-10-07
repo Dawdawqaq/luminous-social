@@ -1,21 +1,16 @@
 package com.luminous.api.storage;
 
 import org.springframework.web.multipart.MultipartFile;
+import java.io.InputStream;
 
-public interface StorageProvider {
-
-    /**
-     * 上传并持久化文件
-     *
-     * @param file 上传的多部分文件
-     * @return 文件的可访问 URL 或路径
-     */
-    String store(MultipartFile file);
-
-    /**
-     * 删除指定文件
-     *
-     * @param fileUrl 文件的访问 URL 或相对路径
-     */
-    void delete(String fileUrl);
+/** 文件先规划再写入，使上传前就能持久化准确的补偿对象；删除失败必须向上报告。 */
+public interface StorageProvider extends AutoCloseable {
+    record PlannedFile(String key, String url, String contentType, long size, String storageType, String readTokenHash) {}
+    PlannedFile plan(MultipartFile file);
+    void store(PlannedFile planned, MultipartFile file);
+    void delete(String objectKey);
+    InputStream read(String objectKey);
+    String type();
+    default String store(MultipartFile file) { PlannedFile planned = plan(file); store(planned, file); return planned.url(); }
+    @Override default void close() {}
 }

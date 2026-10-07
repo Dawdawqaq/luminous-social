@@ -8,6 +8,9 @@ import com.luminous.api.community.CommunityMapper;
 import com.luminous.api.job.DataReconciliationScheduler;
 import com.luminous.api.post.*;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import com.luminous.api.auth.UserMapper;
+import com.luminous.api.cache.CacheConstants;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
@@ -33,7 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("integration")
+@ActiveProfiles(value = "integration", resolver = VoteTestProfileResolver.class)
 public class HighConcurrencyVoteBenchmarkTest {
 
     private static final Logger log = LoggerFactory.getLogger(HighConcurrencyVoteBenchmarkTest.class);
@@ -63,26 +66,36 @@ public class HighConcurrencyVoteBenchmarkTest {
         return "http://localhost:" + port + "/api";
     }
 
+    @Autowired
+    private UserMapper userMapper;
+
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired private com.luminous.api.auth.AuthService authService;
+
     private Long testPostId;
+    private Long testCommunityId;
+    private final List<Long> testUserIds = new ArrayList<>();
+    private String communitySlug;
     private final List<String> userTokens = new ArrayList<>();
     private static final int CONCURRENT_USERS = 40;
 
     @BeforeEach
     void setUp() {
-        // 1. 确保有测试社区
-        Community community = communityMapper.selectOne(new LambdaQueryWrapper<Community>().eq(Community::getSlug, "benchmark-comm"));
-        if (community == null) {
-            community = new Community();
-            community.setId(9988776655L);
-            community.setName("Benchmark Community");
-            community.setSlug("benchmark-comm");
-            community.setDescription("High Concurrency Benchmark");
-            community.setMembersCount(1);
-            community.setMembersUnit("members");
-            community.setRulesJson("[]");
-            community.setModeratorsJson("[]");
-            communityMapper.insert(community);
-        }
+        // 每次测试使用独立资源，清理时只删除本次创建的数据。
+        communitySlug = "e2e-bench-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        Community community = new Community();
+        community.setId(com.luminous.api.common.SnowflakeIdGenerator.getNextId());
+        community.setName("[E2E_TEST] Benchmark Community");
+        community.setSlug(communitySlug);
+        community.setDescription("[E2E_TEST] High Concurrency Benchmark");
+        community.setMembersCount(1);
+        community.setMembersUnit("members");
+        community.setRulesJson("[]");
+        community.setModeratorsJson("[]");
+        communityMapper.insert(community);
+        testCommunityId = community.getId();
 
         // 2. 注册并登录 40 个测试用户
         redisTemplate.delete("luminous:ratelimit:auth:127.0.0.1");
@@ -91,26 +104,25 @@ public class HighConcurrencyVoteBenchmarkTest {
         HttpHeaders bypassHeaders = new HttpHeaders();
         bypassHeaders.set("X-Bypass-Rate-Limit", "true");
         for (int i = 1; i <= CONCURRENT_USERS; i++) {
-            String username = "bench_user_" + System.currentTimeMillis() + "_" + i;
-            AuthDtos.RegisterRequest regReq = new AuthDtos.RegisterRequest(username, "User " + i, "Password123!");
-            ResponseEntity<ApiResponse<AuthDtos.AuthResponse>> regResp = restTemplate.exchange(
-                    getBaseUrl() + "/auth/register",
-                    HttpMethod.POST,
-                    new HttpEntity<>(regReq, bypassHeaders),
-                    new ParameterizedTypeReference<>() {}
-            );
-            if (regResp.getStatusCode().is2xxSuccessful() && regResp.getBody() != null && regResp.getBody().data() != null) {
-                userTokens.add(regResp.getBody().data().token());
-            }
+            String username = "E2E_TEST_" + System.currentTimeMillis() + "_" + i;
+            AuthDtos.RegisterRequest regReq = new AuthDtos.RegisterRequest(username, "[E2E_TEST] User " + i, "Password123!");
+            // 并发投票夹具通过服务层建立账号，认证接口的验证码由独立安全测试覆盖。
+            AuthDtos.AuthResponse registered = authService.register(regReq);
+            userTokens.add(registered.token());
+            testUserIds.add(Long.parseLong(registered.user().id()));
         }
+
+        assertThat(userTokens).hasSize(CONCURRENT_USERS);
 
         // 3. 发布测试帖子
         HttpHeaders authorHeaders = new HttpHeaders();
         authorHeaders.setBearerAuth(userTokens.get(0));
+        authorHeaders.set("X-Idempotency-Key", java.util.UUID.randomUUID().toString());
         PostDtos.CreatePostRequest postReq = new PostDtos.CreatePostRequest(
-                "benchmark-comm",
-                "High Concurrency Vote Post " + System.currentTimeMillis(),
+                communitySlug,
+                "[E2E_TEST] High Concurrency Vote Post " + System.currentTimeMillis(),
                 "This post tests Redis Lua + RocketMQ write-behind under concurrent pressure.",
+                null,
                 null,
                 true
         );
@@ -120,12 +132,15 @@ public class HighConcurrencyVoteBenchmarkTest {
                 new HttpEntity<>(postReq, authorHeaders),
                 new ParameterizedTypeReference<>() {}
         );
+        assertThat(postResp.getStatusCode().is2xxSuccessful()).isTrue();
+        assertThat(postResp.getBody()).isNotNull();
+        assertThat(postResp.getBody().data()).isNotNull();
         testPostId = Long.parseLong(postResp.getBody().data().id());
         log.info("Created benchmark post with ID: {}, registered {} users", testPostId, userTokens.size());
     }
 
     @Test
-    @DisplayName("高并发点赞压测：40 线程同时对同一热点帖子点赞，验证 0 死锁、极速响应与最终一致性")
+    @DisplayName("热点投票验收：40 线程同时投票，验证请求成功率与最终一致性")
     void testHighConcurrencyVoting_NoDeadlocksAndFastLatency() throws InterruptedException {
         int threads = userTokens.size();
         ExecutorService executor = Executors.newFixedThreadPool(threads);
@@ -178,10 +193,11 @@ public class HighConcurrencyVoteBenchmarkTest {
         executor.shutdown();
 
         assertThat(completed).isTrue();
-        log.info("==== HIGH CONCURRENCY BENCHMARK RESULTS ====");
+        log.info("==== HIGH CONCURRENCY BENCHMARK RESULTS ==== 模式={}",
+                Boolean.getBoolean("luminous.vote-test.isolated") ? "H2 + Redis + 同步落库" : "集成环境");
         log.info("Total Concurrent Requests: {}", threads);
         log.info("Success Count: {} (Target: 100%)", successCount.get());
-        log.info("Error Count: {} (Target: 0, ZERO MySQL Deadlocks)", errorCount.get());
+        log.info("Error Count: {} (Target: 0)", errorCount.get());
         log.info("Total Wall-Clock Time: {} ms", totalTime);
 
         // 计算 P50 / P95 / P99 延迟
@@ -191,15 +207,15 @@ public class HighConcurrencyVoteBenchmarkTest {
         long p99 = latencies.get(latencies.size() - 1);
         log.info("Latency Metrics: P50={}ms, P95={}ms, P99={}ms", p50, p95, p99);
 
-        // 1. 验证 0 错误（绝对不能再出现死锁回滚异常）
+        // 1. 验证本次并发请求全部成功
         assertThat(errorCount.get()).isEqualTo(0);
         assertThat(successCount.get()).isEqualTo(threads);
 
         // 2. 验证 Redis 实时计数为 40
-        String redisVal = redisTemplate.opsForValue().get("stat:post:votes:" + testPostId);
+        String redisVal = redisTemplate.opsForValue().get("luminous:stat:post:votes:" + testPostId);
         assertThat(redisVal).isEqualTo(String.valueOf(threads));
 
-        // 3. 等待 RocketMQ 异步消费者批量刷盘完成
+        // 3. 等待异步落库完成；隔离模式采用现有同步降级路径
         for (int i = 0; i < 20; i++) {
             Post p = postMapper.selectById(testPostId);
             if (p != null && p.getVotes() == threads) {
@@ -208,7 +224,7 @@ public class HighConcurrencyVoteBenchmarkTest {
             Thread.sleep(300);
         }
 
-        // 4. 验证 MySQL 权威数据最终一致性
+        // 4. 验证数据库投票记录与帖子总分的最终一致性
         Post dbPost = postMapper.selectById(testPostId);
         assertThat(dbPost.getVotes()).isEqualTo(threads);
 
@@ -218,7 +234,32 @@ public class HighConcurrencyVoteBenchmarkTest {
 
         // 5. 触发数据对账任务，验证对账结果确认 0 漂移
         boolean fixed = dataReconciliationScheduler.reconcilePostVotes(testPostId);
-        assertThat(fixed).isFalse(); // False 说明数据原本就 100% 精确一致，无需修复
-        log.info("==== BENCHMARK PASSED WITH ZERO DEADLOCKS AND 100% CONSISTENCY ====");
+        assertThat(fixed).isFalse(); // false 表示本次对账无需修复
+        log.info("==== BENCHMARK PASSED WITH ALL REQUESTS SUCCESSFUL AND CONSISTENT VOTES ====");
+    }
+
+    @AfterEach
+    void cleanTestData() {
+        if (testPostId != null) {
+            jdbcTemplate.update("DELETE FROM consumed_events WHERE event_id IN (SELECT event_id FROM reliable_events WHERE post_id=?)", testPostId);
+            jdbcTemplate.update("DELETE FROM reliable_events WHERE post_id=?", testPostId);
+            postVoteMapper.delete(new LambdaQueryWrapper<PostVote>().eq(PostVote::getPostId, testPostId));
+            postMapper.deleteById(testPostId);
+            redisTemplate.delete(List.of(CacheConstants.POST_DETAIL_KEY + testPostId,
+                    CacheConstants.POST_UV_KEY + testPostId, "luminous:stat:post:votes:" + testPostId,
+                    "luminous:vote:state:post:" + testPostId, "luminous:vote:version:post:" + testPostId));
+            for (Long userId : testUserIds) {
+                redisTemplate.delete("luminous:vote:post:" + testPostId + ":" + userId);
+            }
+        }
+        if (testCommunityId != null) {
+            communityMapper.deleteById(testCommunityId);
+        }
+        for (Long userId : testUserIds) {
+            userMapper.deleteById(userId);
+            redisTemplate.delete(CacheConstants.USER_STATS_KEY + userId);
+        }
+        testUserIds.clear();
+        userTokens.clear();
     }
 }

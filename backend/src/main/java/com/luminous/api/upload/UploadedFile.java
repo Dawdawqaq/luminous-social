@@ -14,6 +14,12 @@ public class UploadedFile {
     private String contentType;
     private Long sizeBytes;
     private LocalDateTime createdAt;
+    private String storageType;
+    private String readTokenHash;
+    public String getStorageType() { return storageType; }
+    public void setStorageType(String storageType) { this.storageType = storageType; }
+    public String getReadTokenHash() { return readTokenHash; }
+    public void setReadTokenHash(String readTokenHash) { this.readTokenHash = readTokenHash; }
 
     public Long getId() {
         return id;

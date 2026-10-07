@@ -21,7 +21,7 @@ class RateLimitFilterTest {
     @DisplayName("Dev 环境下携带 X-Bypass-Rate-Limit 头应放行")
     void testShouldNotFilterInDevWithBypassHeader() {
         when(environment.getActiveProfiles()).thenReturn(new String[]{"dev"});
-        RateLimitFilter filter = new RateLimitFilter(rateLimiter, objectMapper, environment);
+        RateLimitFilter filter = new RateLimitFilter(rateLimiter, objectMapper, environment, new ClientIpResolver(""));
 
         HttpServletRequest request = Mockito.mock(HttpServletRequest.class);
         when(request.getHeader("X-Bypass-Rate-Limit")).thenReturn("true");
@@ -35,7 +35,7 @@ class RateLimitFilterTest {
     @DisplayName("Prod 生产环境下携带 X-Bypass-Rate-Limit 头严禁放行")
     void testShouldFilterInProdEvenWithBypassHeader() {
         when(environment.getActiveProfiles()).thenReturn(new String[]{"prod"});
-        RateLimitFilter filter = new RateLimitFilter(rateLimiter, objectMapper, environment);
+        RateLimitFilter filter = new RateLimitFilter(rateLimiter, objectMapper, environment, new ClientIpResolver(""));
 
         HttpServletRequest request = Mockito.mock(HttpServletRequest.class);
         when(request.getHeader("X-Bypass-Rate-Limit")).thenReturn("true");
@@ -49,7 +49,7 @@ class RateLimitFilterTest {
     @DisplayName("非登录注册请求不进行限流过滤")
     void testShouldNotFilterNonAuthRequests() {
         when(environment.getActiveProfiles()).thenReturn(new String[]{"prod"});
-        RateLimitFilter filter = new RateLimitFilter(rateLimiter, objectMapper, environment);
+        RateLimitFilter filter = new RateLimitFilter(rateLimiter, objectMapper, environment, new ClientIpResolver(""));
 
         HttpServletRequest request = Mockito.mock(HttpServletRequest.class);
         when(request.getHeader("X-Bypass-Rate-Limit")).thenReturn(null);
