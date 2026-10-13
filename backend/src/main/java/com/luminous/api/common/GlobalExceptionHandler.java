@@ -15,6 +15,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    @ExceptionHandler(com.luminous.api.post.CommentRateLimitException.class)
+    public ResponseEntity<ApiResponse<Void>> handleCommentRateLimit(com.luminous.api.post.CommentRateLimitException ex) {
+        return ResponseEntity.status(ex.getStatus()).header("Retry-After", String.valueOf(ex.getRetryAfterSeconds()))
+                .body(ApiResponse.fail(ex.getCode(), ex.getMessage()));
+    }
+
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusiness(BusinessException ex) {
         log.warn("Business error: {}", ex.getMessage(), ex);

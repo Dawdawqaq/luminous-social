@@ -32,13 +32,15 @@ public class CommunityService {
     private final ObjectMapper objectMapper;
     private final UserMapper userMapper;
     private final RedissonClient redissonClient;
+    private final org.springframework.context.ApplicationEventPublisher events;
 
-    public CommunityService(CommunityMapper communityMapper, CommunityMemberMapper communityMemberMapper, ObjectMapper objectMapper, UserMapper userMapper, RedissonClient redissonClient) {
+    public CommunityService(CommunityMapper communityMapper, CommunityMemberMapper communityMemberMapper, ObjectMapper objectMapper, UserMapper userMapper, RedissonClient redissonClient, org.springframework.context.ApplicationEventPublisher events) {
         this.communityMapper = communityMapper;
         this.communityMemberMapper = communityMemberMapper;
         this.objectMapper = objectMapper;
         this.userMapper = userMapper;
         this.redissonClient = redissonClient;
+        this.events = events;
     }
 
     public List<CommunityDtos.CommunityDto> list(String search, CurrentUser currentUser) {
@@ -120,8 +122,10 @@ public class CommunityService {
                 member.setCommunityId(community.getId());
                 member.setUserId(currentUser.id());
                 communityMemberMapper.insert(member);
+                // 先完成社区行更新，再锁成长账户，与发帖的社区外键锁顺序保持一致。
                 communityMapper.updateMembersCountAtomic(community.getId(), 1);
                 community.setMembersCount(community.getMembersCount() + 1);
+                events.publishEvent(new com.luminous.api.growth.GrowthEvent.Joined(currentUser.id(), community.getId()));
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -174,6 +178,7 @@ public class CommunityService {
         member.setCommunityId(community.getId());
         member.setUserId(currentUser.id());
         communityMemberMapper.insert(member);
+        events.publishEvent(new com.luminous.api.growth.GrowthEvent.Joined(currentUser.id(), community.getId()));
 
         return toDto(community, currentUser);
     }

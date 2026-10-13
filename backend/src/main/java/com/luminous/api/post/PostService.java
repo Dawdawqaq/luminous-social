@@ -18,7 +18,9 @@ import com.luminous.api.community.Community;
 import com.luminous.api.community.CommunityService;
 import com.luminous.api.feed.FeedService;
 import com.luminous.api.mq.VoteMQProducer;
+import com.luminous.api.notification.NotificationEvent;
 import com.luminous.api.security.CurrentUser;
+import com.luminous.api.upload.UploadService;
 import com.luminous.api.vote.VoteCommandService;
 import com.luminous.api.vote.VoteProjectionService;
 import com.luminous.api.vote.VoteRepository;
@@ -37,6 +39,9 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import com.luminous.api.growth.GrowthEvent;
+import com.luminous.api.growth.GrowthQueryService;
+import com.luminous.api.growth.GrowthRepository;
 
 @Service
 public class PostService {
@@ -60,6 +65,9 @@ public class PostService {
     private final VoteProjectionService voteProjectionService;
     private final VoteRepository voteRepository;
     private final PostReadMetricsService readMetrics;
+    private final GrowthQueryService growthQueries;
+    private final UploadService uploadService;
+    private final CommentPublicationPolicy commentPublicationPolicy;
 
     public PostService(
             PostMapper postMapper,
@@ -79,7 +87,10 @@ public class PostService {
             VoteCommandService voteCommandService,
             VoteProjectionService voteProjectionService,
             VoteRepository voteRepository,
-            PostReadMetricsService readMetrics
+            PostReadMetricsService readMetrics,
+            GrowthQueryService growthQueries,
+            UploadService uploadService,
+            CommentPublicationPolicy commentPublicationPolicy
     ) {
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
@@ -99,6 +110,9 @@ public class PostService {
         this.voteProjectionService = voteProjectionService;
         this.voteRepository = voteRepository;
         this.readMetrics = readMetrics;
+        this.growthQueries = growthQueries;
+        this.uploadService = uploadService;
+        this.commentPublicationPolicy = commentPublicationPolicy;
     }
 
     public PageResponse<PostDtos.PostDto> list(String filter, String communitySlug, String search, long page, long size, CurrentUser currentUser) {
@@ -109,6 +123,7 @@ public class PostService {
         long offset = PaginationPolicy.posts(page, size);
 
         LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>().eq(Post::getIsPublic, true);
+        wrapper.in(Post::getStatus, "NORMAL", "PUBLISHED");
         if (communitySlug != null && !communitySlug.isBlank()) {
             wrapper.eq(Post::getCommunityId, communityService.requireBySlug(communitySlug).getId());
         }
@@ -192,6 +207,7 @@ public class PostService {
         post.setStatus("NORMAL");
         post.setCreatedAt(LocalDateTime.now());
         postMapper.insert(post);
+        eventPublisher.publishEvent(new GrowthEvent.Created("POST", post.getId()));
 
         userStatsCacheService.incrementPostCount(currentUser.id());
         postCacheService.invalidatePost(post.getId());
@@ -208,18 +224,85 @@ public class PostService {
     }
 
     public List<PostDtos.CommentDto> comments(Long postId, CurrentUser currentUser) {
-        requirePost(postId, currentUser);
+        Post parent = requirePost(postId, currentUser);
         List<Comment> comments = commentMapper.selectList(new LambdaQueryWrapper<Comment>()
                 .eq(Comment::getPostId, postId)
-                .orderByAsc(Comment::getCreatedAt));
+                .orderByAsc(Comment::getCreatedAt, Comment::getId));
 
+        return commentDtos(parent, comments, currentUser);
+    }
+
+    @Transactional(readOnly = true)
+    public PostDtos.CommentSlice<PostDtos.CommentFloorDto> commentFloors(Long postId, String cursorText, int size, CurrentUser currentUser) {
+        CommentCursor.validateSize(size);
+        Post parent = requirePost(postId, currentUser);
+        CommentCursor cursor = CommentCursor.decode(cursorText, postId, "floors");
+        List<CommentFloorRow> fetched = commentMapper.selectFloors(postId, cursor, size + 1);
+        boolean hasNext = fetched.size() > size;
+        List<CommentFloorRow> rows = fetched.stream().limit(size).toList();
+        if (rows.isEmpty()) return new PostDtos.CommentSlice<>(List.of(), null, false, parent.getCommentsCount());
+        List<Long> ids = rows.stream().map(CommentFloorRow::id).toList();
+        Map<Long, Long> counts = commentMapper.countReplies(postId, ids).stream()
+                .collect(Collectors.toMap(CommentReplyCount::parentId, CommentReplyCount::replyCount));
+        List<Long> rootIds = rows.stream().filter(CommentFloorRow::rootPresent).map(CommentFloorRow::id).toList();
+        List<Comment> roots = rootIds.isEmpty() ? List.of() : commentMapper.selectBatchIds(rootIds);
+        Map<String, PostDtos.CommentDto> dtos = commentDtos(parent, roots, currentUser).stream()
+                .collect(Collectors.toMap(PostDtos.CommentDto::id, Function.identity()));
+        List<PostDtos.CommentFloorDto> items = rows.stream().map(row -> new PostDtos.CommentFloorDto(
+                row.id().toString(), dtos.get(row.id().toString()), counts.getOrDefault(row.id(), 0L))).toList();
+        CommentFloorRow last = rows.getLast();
+        String next = hasNext ? new CommentCursor(last.votes(), last.createdAt(), last.id()).encode(postId, "floors") : null;
+        return new PostDtos.CommentSlice<>(items, next, hasNext, parent.getCommentsCount());
+    }
+
+    @Transactional(readOnly = true)
+    public PostDtos.CommentSlice<PostDtos.CommentDto> commentReplies(Long postId, Long rootId, String cursorText, int size, CurrentUser currentUser) {
+        CommentCursor.validateSize(size);
+        Post parent = requirePost(postId, currentUser);
+        String scope = CommentCursor.replyScope(rootId);
+        CommentCursor cursor = CommentCursor.decode(cursorText, postId, scope);
+        Comment root = commentMapper.selectById(rootId);
+        long total = commentMapper.selectCount(new LambdaQueryWrapper<Comment>()
+                .eq(Comment::getPostId, postId).eq(Comment::getParentId, rootId));
+        if ((root != null && (!Objects.equals(root.getPostId(), postId) || root.getParentId() != null)) || (root == null && total == 0)) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "COMMENT_FLOOR_NOT_FOUND", "评论楼层不存在");
+        }
+        List<Comment> fetched = commentMapper.selectReplies(postId, rootId, cursor, size + 1);
+        boolean hasNext = fetched.size() > size;
+        List<Comment> rows = fetched.stream().limit(size).toList();
+        String next = null;
+        if (hasNext) {
+            Comment last = rows.getLast();
+            // 楼内投票不影响翻页边界，保留统一游标结构但不携带排序分数。
+            next = new CommentCursor(0, last.getCreatedAt(), last.getId()).encode(postId, scope);
+        }
+        return new PostDtos.CommentSlice<>(commentDtos(parent, rows, currentUser), next, hasNext, total);
+    }
+
+    @Transactional(readOnly=true)
+    public PostDtos.CommentContext commentContext(Long postId,Long commentId,CurrentUser user) {
+        Post post=requirePost(postId,user);
+        Comment target=commentMapper.selectById(commentId);
+        if(target==null || !Objects.equals(target.getPostId(),postId))
+            throw new BusinessException(HttpStatus.NOT_FOUND,"COMMENT_NOT_FOUND","这条评论已删除或暂时不可查看");
+        Long rootId=target.getParentId()==null?target.getId():target.getParentId();
+        Comment root=target.getParentId()==null?target:commentMapper.selectById(rootId);
+        List<Comment> rows=root==null || root.getId().equals(target.getId()) ? List.of(target) : List.of(root,target);
+        Map<String,PostDtos.CommentDto> dtos=commentDtos(post,rows,user).stream().collect(Collectors.toMap(PostDtos.CommentDto::id,Function.identity()));
+        long count=commentMapper.selectCount(new LambdaQueryWrapper<Comment>().eq(Comment::getPostId,postId).eq(Comment::getParentId,rootId));
+        return new PostDtos.CommentContext(new PostDtos.CommentFloorDto(rootId.toString(),root==null?null:dtos.get(rootId.toString()),count),dtos.get(commentId.toString()));
+    }
+
+    private List<PostDtos.CommentDto> commentDtos(Post parent, List<Comment> comments, CurrentUser currentUser) {
         if (comments.isEmpty()) {
             return List.of();
         }
 
         Set<Long> userIds = comments.stream().map(Comment::getAuthorId).collect(Collectors.toSet());
+        comments.stream().map(Comment::getReplyToUserId).filter(Objects::nonNull).forEach(userIds::add);
         Map<Long, User> userMap = userMapper.selectBatchIds(userIds).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
+        var authorGrowth = growthQueries.authorProgresses(userIds, Set.of(parent.getCommunityId()));
 
         Map<Long, Integer> userVotes = Collections.emptyMap();
         if (currentUser != null) {
@@ -237,16 +320,22 @@ public class PostService {
         return comments.stream().map(c -> {
             User author = userMap.get(c.getAuthorId());
             PostDtos.AuthorDto authorDto = author != null
-                    ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl())
+                    ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl(),
+                        authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), 0)),
+                        authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), parent.getCommunityId())))
                     : new PostDtos.AuthorDto("unknown", "未知用户", null);
             int uv = finalUserVotes.getOrDefault(c.getId(), 0);
             return new PostDtos.CommentDto(
                     String.valueOf(c.getId()),
                     authorDto,
                     c.getContent(),
+                    c.getImageUrl(),
                     TimeText.from(c.getCreatedAt()),
                     c.getVotes(),
-                    uv
+                    uv,
+                    nullableId(c.getParentId()),
+                    nullableId(c.getReplyToCommentId()),
+                    replyAuthor(c.getReplyToUserId() == null ? null : userMap.get(c.getReplyToUserId()))
             );
         }).toList();
     }
@@ -256,30 +345,75 @@ public class PostService {
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "您需要先登录才能发表评论");
         }
-        requirePost(postId, currentUser);
+        Post post = lockPost(postId, currentUser);
+        if (!request.isContentPresent()
+                || (request.image() != null && request.image().length() > 512)) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_COMMENT", "请填写评论文字或添加一张有效图片");
+        }
+        if (request.content().length() > request.maxContentLength()) {
+            String label = request.replyToCommentId() == null ? "评论" : "楼中楼回复";
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_COMMENT_LENGTH",
+                    label + "最多 " + request.maxContentLength() + " 个字符");
+        }
+        if (!request.isReplyTextOnly()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "REPLY_IMAGE_NOT_ALLOWED", "楼中楼只支持文字回复，不能添加图片");
+        }
+        Comment target = null;
+        if (request.replyToCommentId() != null) {
+            // 所有评论写入先锁帖子，同帖删除和回复串行化，不接受客户端传入楼层或回复用户。
+            target = commentMapper.selectById(request.replyToCommentId());
+            if (target == null || !Objects.equals(target.getPostId(), postId)) {
+                throw new BusinessException(HttpStatus.NOT_FOUND, "REPLY_TARGET_NOT_FOUND", "回复对象已删除或不在当前帖子中");
+            }
+        }
+        String image = request.image() == null ? null : uploadService.requireOwnedImage(request.image(), currentUser);
+        commentPublicationPolicy.check(currentUser.id());
         Comment comment = new Comment();
         comment.setId(SnowflakeIdGenerator.getNextId());
         comment.setPostId(postId);
+        if (target != null) {
+            comment.setParentId(target.getParentId() == null ? target.getId() : target.getParentId());
+            comment.setReplyToCommentId(target.getId());
+            comment.setReplyToUserId(target.getAuthorId());
+        }
         comment.setAuthorId(currentUser.id());
         comment.setContent(request.content());
+        comment.setImageUrl(image);
         comment.setVotes(0);
         comment.setCreatedAt(LocalDateTime.now());
         commentMapper.insert(comment);
+        eventPublisher.publishEvent(new GrowthEvent.Created("COMMENT", comment.getId()));
 
         postMapper.updateCommentsCountAtomic(postId, 1);
         postCacheService.invalidatePost(postId);
 
-        User author = userMapper.selectById(currentUser.id());
-        PostDtos.AuthorDto authorDto = new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl());
+        // 评论和通知意图同事务提交，提交后由现有可靠事件链路投递，自己评论不通知自己。
+        Long receiverId = target == null ? post.getAuthorId() : target.getAuthorId();
+        if (!Objects.equals(receiverId, currentUser.id())) {
+            String preview = request.content().isBlank() ? "发送了一张图片"
+                    : request.content().substring(0, Math.min(request.content().length(), 255));
+            eventPublisher.publishEvent(NotificationEvent.interaction(currentUser.id(), receiverId,
+                    target == null ? "COMMENT_POST" : "REPLY_COMMENT", "POST", postId, preview,postId,comment.getId()));
+        }
 
-        return new PostDtos.CommentDto(
+        User author = userMapper.selectById(currentUser.id());
+        PostDtos.AuthorDto authorDto = new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl(),
+                growthQueries.progress(author.getId(), 0), growthQueries.progress(author.getId(), post.getCommunityId()));
+
+        PostDtos.CommentDto result = new PostDtos.CommentDto(
                 String.valueOf(comment.getId()),
                 authorDto,
                 comment.getContent(),
+                comment.getImageUrl(),
                 "刚刚",
                 0,
-                0
+                0,
+                nullableId(comment.getParentId()),
+                nullableId(comment.getReplyToCommentId()),
+                target == null ? null : replyAuthor(userMapper.selectById(target.getAuthorId()))
         );
+        commentPublicationPolicy.record(currentUser.id(), comment.getId());
+        return result;
     }
 
     public PostDtos.PostDto votePost(Long postId, int value, CurrentUser currentUser) {
@@ -336,45 +470,53 @@ public class PostService {
             throw new BusinessException(HttpStatus.NOT_FOUND, "COMMENT_NOT_FOUND", "评论不存在");
         }
 
-        requirePost(comment.getPostId(), currentUser);
+        Post parent = lockPost(comment.getPostId(), currentUser);
+        comment = commentMapper.selectForUpdate(commentId);
+        if (comment == null) throw new BusinessException(HttpStatus.NOT_FOUND, "COMMENT_NOT_FOUND", "评论不存在");
 
-        CommentVote existing = commentVoteMapper.selectOne(new LambdaQueryWrapper<CommentVote>()
-                .eq(CommentVote::getCommentId, commentId)
-                .eq(CommentVote::getUserId, currentUser.id()));
+        // 父帖与评论锁已保护同一来源；先建立投票行，再当前读，避免跨帖首次插入的间隙锁环路。
+        commentVoteMapper.initialize(SnowflakeIdGenerator.getNextId(), commentId, currentUser.id());
+        CommentVote existing = commentVoteMapper.selectForUpdate(commentId, currentUser.id());
+        if (existing == null) throw new IllegalStateException("评论投票初始化失败");
 
-        int oldVal = existing != null ? existing.getValue() : 0;
+        int oldVal = existing.getValue();
         int delta = value - oldVal;
 
+        if (value == 0) {
+            // 首次取消也删除本事务的临时零状态，外部仍以无投票行表示未投票。
+            commentVoteMapper.deleteById(existing.getId());
+        } else if (delta != 0) {
+            existing.setValue(value);
+            commentVoteMapper.updateById(existing);
+        }
         if (delta != 0) {
-            if (value == 0 && existing != null) {
-                commentVoteMapper.deleteById(existing.getId());
-            } else if (existing != null) {
-                existing.setValue(value);
-                commentVoteMapper.updateById(existing);
-            } else {
-                CommentVote cv = new CommentVote();
-                cv.setId(SnowflakeIdGenerator.getNextId());
-                cv.setCommentId(commentId);
-                cv.setUserId(currentUser.id());
-                cv.setValue(value);
-                commentVoteMapper.insert(cv);
-            }
             commentMapper.updateVotesAtomic(commentId, delta);
             comment.setVotes(comment.getVotes() + delta);
         }
 
+        if(value==1 && oldVal!=1 && !Objects.equals(comment.getAuthorId(),currentUser.id())) {
+            String preview=comment.getContent()==null||comment.getContent().isBlank()?"图片评论":comment.getContent().substring(0,Math.min(255,comment.getContent().length()));
+            eventPublisher.publishEvent(NotificationEvent.interaction(currentUser.id(),comment.getAuthorId(),
+                    "LIKE_COMMENT","COMMENT",commentId,preview,comment.getPostId(),commentId));
+        }
+        eventPublisher.publishEvent(new GrowthEvent.Liked("COMMENT", commentId, currentUser.id()));
         User author = userMapper.selectById(comment.getAuthorId());
         PostDtos.AuthorDto authorDto = author != null
-                ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl())
+                ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl(),
+                    growthQueries.progress(author.getId(), 0), growthQueries.progress(author.getId(), parent.getCommunityId()))
                 : new PostDtos.AuthorDto("unknown", "未知用户", null);
 
         return new PostDtos.CommentDto(
                 String.valueOf(comment.getId()),
                 authorDto,
                 comment.getContent(),
-                "刚刚",
+                comment.getImageUrl(),
+                TimeText.from(comment.getCreatedAt()),
                 comment.getVotes(),
-                value
+                value,
+                nullableId(comment.getParentId()),
+                nullableId(comment.getReplyToCommentId()),
+                comment.getReplyToUserId() == null ? null : replyAuthor(userMapper.selectById(comment.getReplyToUserId()))
         );
     }
 
@@ -438,11 +580,13 @@ public class PostService {
         if (currentUser == null) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         }
-        Post post = requirePost(id, currentUser);
+        Post post = lockPost(id, currentUser);
         boolean isAdmin = "ADMIN".equalsIgnoreCase(currentUser.role());
         if (!post.getAuthorId().equals(currentUser.id()) && !isAdmin) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "您无权删除该帖子");
         }
+        boolean moderated = isAdmin && !Objects.equals(post.getAuthorId(), currentUser.id());
+        eventPublisher.publishEvent(new GrowthEvent.Removed("POST", id, moderated, moderated ? "管理员违规删除帖子" : "作者主动删除帖子"));
         postMapper.deleteById(id);
         commentMapper.delete(new LambdaQueryWrapper<Comment>().eq(Comment::getPostId, id));
         bookmarkMapper.delete(new LambdaQueryWrapper<Bookmark>().eq(Bookmark::getPostId, id));
@@ -461,11 +605,15 @@ public class PostService {
         if (comment == null) {
             throw new BusinessException(HttpStatus.NOT_FOUND, "COMMENT_NOT_FOUND", "评论不存在");
         }
-        requirePost(comment.getPostId(), currentUser);
+        lockPost(comment.getPostId(), currentUser);
+        comment = commentMapper.selectForUpdate(commentId);
+        if (comment == null) throw new BusinessException(HttpStatus.NOT_FOUND, "COMMENT_NOT_FOUND", "评论不存在");
         boolean isAdmin = "ADMIN".equalsIgnoreCase(currentUser.role());
         if (!comment.getAuthorId().equals(currentUser.id()) && !isAdmin) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "您无权删除该评论");
         }
+        boolean moderated = isAdmin && !Objects.equals(comment.getAuthorId(), currentUser.id());
+        eventPublisher.publishEvent(new GrowthEvent.Removed("COMMENT", commentId, moderated, moderated ? "管理员违规删除评论" : "作者主动删除评论"));
         commentMapper.deleteById(commentId);
         commentVoteMapper.delete(new LambdaQueryWrapper<CommentVote>().eq(CommentVote::getCommentId, commentId));
         postMapper.updateCommentsCountAtomic(comment.getPostId(), -1);
@@ -477,6 +625,19 @@ public class PostService {
         if (post == null) {
             throw new BusinessException(HttpStatus.NOT_FOUND, "POST_NOT_FOUND", "帖子不存在");
         }
+        PostAccessPolicy.requireReadable(post, currentUser);
+        return post;
+    }
+
+    private static String nullableId(Long id) { return id == null ? null : String.valueOf(id); }
+
+    private static PostDtos.AuthorDto replyAuthor(User user) {
+        return user == null ? null : new PostDtos.AuthorDto(user.getUsername(), user.getDisplayName(), user.getAvatarUrl());
+    }
+
+    private Post lockPost(Long id, CurrentUser currentUser) {
+        Post post = postMapper.selectForUpdate(id);
+        if (post == null) throw new BusinessException(HttpStatus.NOT_FOUND, "POST_NOT_FOUND", "帖子不存在");
         PostAccessPolicy.requireReadable(post, currentUser);
         return post;
     }
@@ -498,6 +659,7 @@ public class PostService {
 
         Set<Long> communityIds = posts.stream().map(Post::getCommunityId).collect(Collectors.toSet());
         Map<Long, Community> communityMap = communityService.mapByIds(communityIds);
+        var authorGrowth = growthQueries.authorProgresses(userIds, communityIds);
 
         Map<Long, Integer> userVotes = Collections.emptyMap();
         Set<Long> bookmarkedIds = Collections.emptySet();
@@ -534,7 +696,9 @@ public class PostService {
         return posts.stream().map(p -> {
             User author = userMap.get(p.getAuthorId());
             PostDtos.AuthorDto authorDto = author != null
-                    ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl())
+                    ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl(),
+                        authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), 0)),
+                        authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), p.getCommunityId())))
                     : new PostDtos.AuthorDto("unknown", "未知用户", null);
 
             Community comm = communityMap.get(p.getCommunityId());

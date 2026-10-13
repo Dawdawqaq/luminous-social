@@ -24,6 +24,7 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CommunityServiceTest {
+    @org.mockito.Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @Mock
     private CommunityMapper communityMapper;

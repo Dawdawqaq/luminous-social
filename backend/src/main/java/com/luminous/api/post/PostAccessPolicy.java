@@ -12,7 +12,8 @@ public final class PostAccessPolicy {
     }
 
     public static boolean canRead(Post post, CurrentUser currentUser) {
-        return post != null && (Boolean.TRUE.equals(post.getIsPublic())
+        return post != null && (!"BANNED".equals(post.getStatus()) || currentUser != null && "ADMIN".equalsIgnoreCase(currentUser.role()))
+                && (Boolean.TRUE.equals(post.getIsPublic())
                 || currentUser != null && (Objects.equals(post.getAuthorId(), currentUser.id())
                 || "ADMIN".equalsIgnoreCase(currentUser.role())));
     }

@@ -95,6 +95,9 @@ class PostServiceTest {
     @Mock private com.luminous.api.vote.VoteRepository voteRepository;
 
     @Mock private com.luminous.api.cache.PostReadMetricsService readMetrics;
+    @Mock private com.luminous.api.growth.GrowthQueryService growthQueries;
+    @Mock private com.luminous.api.upload.UploadService uploadService;
+    @Mock private CommentPublicationPolicy commentPublicationPolicy;
 
     @InjectMocks
     private PostService postService;
@@ -132,6 +135,17 @@ class PostServiceTest {
         samplePost.setCreatedAt(LocalDateTime.now());
 
         lenient().when(postCacheService.queryWithPassThrough(500L)).thenReturn(samplePost);
+        lenient().when(postMapper.selectForUpdate(500L)).thenReturn(samplePost);
+        lenient().when(commentMapper.selectForUpdate(any())).thenAnswer(invocation -> commentMapper.selectById((Long) invocation.getArgument(0)));
+        lenient().when(commentVoteMapper.selectForUpdate(any(), any())).thenAnswer(invocation -> {
+            // 模拟唯一键初始化后可当前读的零状态；图片和回复投票用例继续验证原返回内容。
+            CommentVote vote = new CommentVote();
+            vote.setId(900L);
+            vote.setCommentId(invocation.getArgument(0));
+            vote.setUserId(invocation.getArgument(1));
+            vote.setValue(0);
+            return vote;
+        });
         lenient().when(redissonClient.getLock(any(String.class))).thenReturn(rLock);
         lenient().when(rLock.tryLock(anyLong(), anyLong(), any())).thenReturn(true);
         lenient().when(rLock.isHeldByCurrentThread()).thenReturn(true);
@@ -224,6 +238,231 @@ class PostServiceTest {
         assertThat(commentDto.content()).isEqualTo("Great post!");
         verify(commentMapper).insert(any(Comment.class));
         verify(postMapper).updateCommentsCountAtomic(500L, 1);
+        verify(eventPublisher, never()).publishEvent(any(com.luminous.api.notification.NotificationEvent.class));
+        verify(eventPublisher).publishEvent(any(com.luminous.api.growth.GrowthEvent.Created.class));
+    }
+
+    @Test
+    void addComment_NotifiesPostAuthorWithBoundedPreview() {
+        CurrentUser commenter = new CurrentUser(2L, "e2e_commenter", "USER");
+        when(userMapper.selectById(2L)).thenReturn(sampleAuthor);
+        String content = "[E2E_TEST] " + "评论".repeat(140);
+
+        postService.addComment(500L, new PostDtos.CreateCommentRequest(content), commenter);
+
+        ArgumentCaptor<com.luminous.api.notification.NotificationEvent> event =
+                ArgumentCaptor.forClass(com.luminous.api.notification.NotificationEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().actorId()).isEqualTo(2L);
+        assertThat(event.getValue().receiverId()).isEqualTo(1L);
+        assertThat(event.getValue().type()).isEqualTo("COMMENT_POST");
+        assertThat(event.getValue().targetType()).isEqualTo("POST");
+        assertThat(event.getValue().targetId()).isEqualTo(500L);
+        assertThat(event.getValue().contentPreview()).isEqualTo(content.substring(0, 255));
+        assertThat(event.getValue().eventId()).isNotBlank();
+    }
+
+    @Test
+    void imageOnlyComment_PersistsImageAndPreservesItInListAndVoteResponse() {
+        CurrentUser commenter = new CurrentUser(2L, "E2E_TEST_image", "USER");
+        String image = "/api/files/test.png?token=test";
+        when(uploadService.requireOwnedImage(image, commenter)).thenReturn(image);
+        when(userMapper.selectById(2L)).thenReturn(sampleAuthor);
+        PostDtos.CommentDto created = postService.addComment(500L, new PostDtos.CreateCommentRequest(null, image), commenter);
+        ArgumentCaptor<Comment> saved = ArgumentCaptor.forClass(Comment.class);
+        verify(commentMapper).insert(saved.capture());
+        Comment comment = saved.getValue();
+        assertThat(comment.getContent()).isEmpty();
+        assertThat(comment.getImageUrl()).isEqualTo(image);
+        assertThat(created.image()).isEqualTo(image);
+        ArgumentCaptor<com.luminous.api.notification.NotificationEvent> notification =
+                ArgumentCaptor.forClass(com.luminous.api.notification.NotificationEvent.class);
+        verify(eventPublisher).publishEvent(notification.capture());
+        assertThat(notification.getValue().contentPreview()).isEqualTo("发送了一张图片");
+
+        when(commentMapper.selectList(any())).thenReturn(List.of(comment));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
+        assertThat(postService.comments(500L, null).getFirst().image()).isEqualTo(image);
+
+        when(commentMapper.selectById(comment.getId())).thenReturn(comment);
+        assertThat(postService.voteComment(comment.getId(), 1, commenter).image()).isEqualTo(image);
+    }
+
+    @Test
+    void addComment_RejectsEmptyBodyAndInvalidImageBeforeInsert() {
+        assertThatThrownBy(() -> postService.addComment(500L, new PostDtos.CreateCommentRequest("  "), currentUser))
+                .isInstanceOf(BusinessException.class);
+        String image = "https://example.com/not-uploaded.png";
+        when(uploadService.requireOwnedImage(image, currentUser)).thenThrow(
+                new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_COMMENT_IMAGE", "图片无效"));
+        assertThatThrownBy(() -> postService.addComment(500L, new PostDtos.CreateCommentRequest("文字", image), currentUser))
+                .isInstanceOf(BusinessException.class);
+        verify(commentMapper, never()).insert(any(Comment.class));
+    }
+
+    @Test
+    void commentRateLimitRejectsBeforeAnyCommentWrite() {
+        doThrow(new CommentRateLimitException(5)).when(commentPublicationPolicy).check(currentUser.id());
+        assertThatThrownBy(() -> postService.addComment(500L, new PostDtos.CreateCommentRequest("[E2E_TEST] 限流"), currentUser))
+                .isInstanceOf(CommentRateLimitException.class);
+        verify(commentMapper, never()).insert(any(Comment.class));
+        verify(commentPublicationPolicy, never()).record(anyLong(), anyLong());
+    }
+
+    @Test
+    void commentFloors_BoundsRowsCountsOnlyReturnedFloorsAndPreservesDeletedRoot() {
+        LocalDateTime time = LocalDateTime.of(2026, 10, 13, 12, 0);
+        when(commentMapper.selectFloors(500L, null, 3)).thenReturn(List.of(
+                new CommentFloorRow(600L, 5, time, true), new CommentFloorRow(700L, 0, time, false),
+                new CommentFloorRow(800L, 0, time, true)));
+        Comment root = replyFixture(600L, 1L, null);
+        when(commentMapper.selectBatchIds(List.of(600L))).thenReturn(List.of(root));
+        when(commentMapper.countReplies(500L, List.of(600L, 700L))).thenReturn(List.of(
+                new CommentReplyCount(600L, 4), new CommentReplyCount(700L, 2)));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
+        var result = postService.commentFloors(500L, null, 2, null);
+        assertThat(result.items()).hasSize(2);
+        assertThat(result.items().getLast().root()).isNull();
+        assertThat(result.items().getLast().replyCount()).isEqualTo(2);
+        assertThat(result.hasNext()).isTrue();
+        assertThat(CommentCursor.decode(result.nextCursor(), 500L, "floors").id()).isEqualTo(700L);
+        verify(commentMapper, never()).selectList(any());
+        verify(commentMapper, never()).selectReplies(any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void commentPages_RejectInvalidSizeAndCrossScopeCursorBeforeFetchingRows() {
+        assertThatThrownBy(() -> postService.commentFloors(500L, null, 31, null)).isInstanceOf(BusinessException.class);
+        String cursor = new CommentCursor(1, LocalDateTime.now(), 600L).encode(500L, "floors");
+        assertThatThrownBy(() -> postService.commentReplies(500L, 600L, cursor, 5, null)).isInstanceOf(BusinessException.class);
+        verify(commentMapper, never()).selectFloors(any(), any(), anyInt());
+        verify(commentMapper, never()).selectReplies(any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void commentPages_HidePrivatePostAndRejectWrongFloor() {
+        samplePost.setIsPublic(false);
+        assertHidden(() -> postService.commentFloors(500L, null, 10, null));
+        assertHidden(() -> postService.commentReplies(500L, 600L, null, 5, null));
+        samplePost.setIsPublic(true);
+        Comment child = replyFixture(700L, 1L, 600L);
+        when(commentMapper.selectById(700L)).thenReturn(child);
+        when(commentMapper.selectCount(any())).thenReturn(0L);
+        assertThatThrownBy(() -> postService.commentReplies(500L, 700L, null, 5, null)).isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void commentReplies_UsesTimeCursorAndRejectsLegacyVoteCursor() {
+        Comment root = replyFixture(600L, 1L, null);
+        Comment first = replyFixture(700L, 1L, 600L);
+        Comment second = replyFixture(800L, 1L, 600L);
+        first.setVotes(20);
+        when(commentMapper.selectById(600L)).thenReturn(root);
+        when(commentMapper.selectCount(any())).thenReturn(2L);
+        when(commentMapper.selectReplies(500L, 600L, null, 2)).thenReturn(List.of(first, second));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
+        var page = postService.commentReplies(500L, 600L, null, 1, null);
+        CommentCursor cursor = CommentCursor.decode(page.nextCursor(), 500L, CommentCursor.replyScope(600L));
+        assertThat(cursor.votes()).isZero();
+        assertThat(cursor.createdAt()).isEqualTo(first.getCreatedAt());
+        assertThat(cursor.id()).isEqualTo(first.getId());
+        String legacy = new CommentCursor(20, first.getCreatedAt(), first.getId()).encode(500L, "600");
+        assertThatThrownBy(() -> postService.commentReplies(500L, 600L, legacy, 5, null))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> assertThat(ex.getCode()).isEqualTo("INVALID_COMMENT_CURSOR"));
+    }
+
+    @Test
+    void addComment_RejectsOversizeRootAndReplyBeforeAnyWrite() {
+        assertThatThrownBy(() -> postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("字".repeat(301)), currentUser))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getCode()).isEqualTo("INVALID_COMMENT_LENGTH");
+                    assertThat(ex.getMessage()).isEqualTo("评论最多 300 个字符");
+                });
+        assertThatThrownBy(() -> postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("字".repeat(151), null, 600L), currentUser))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> {
+                    assertThat(ex.getCode()).isEqualTo("INVALID_COMMENT_LENGTH");
+                    assertThat(ex.getMessage()).isEqualTo("楼中楼回复最多 150 个字符");
+                });
+        verify(commentMapper, never()).insert(any(Comment.class));
+        verify(postMapper, never()).updateCommentsCountAtomic(anyLong(), anyInt());
+        verifyNoInteractions(eventPublisher, uploadService);
+    }
+
+    @Test
+    void repliesAlwaysBelongToRootAndNotifyActualTarget() {
+        Comment root = replyFixture(600L, 2L, null);
+        Comment child = replyFixture(700L, 3L, 600L);
+        when(commentMapper.selectById(600L)).thenReturn(root);
+        when(commentMapper.selectById(700L)).thenReturn(child);
+        when(userMapper.selectById(any(Long.class))).thenReturn(sampleAuthor);
+        PostDtos.CommentDto direct = postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("[E2E_TEST] 回复主评论", null, 600L), currentUser);
+        assertThat(direct.parentId()).isEqualTo("600");
+        assertThat(direct.replyToCommentId()).isEqualTo("600");
+
+        PostDtos.CommentDto nested = postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("[E2E_TEST] 回复楼内用户", null, 700L), currentUser);
+        assertThat(nested.parentId()).isEqualTo("600");
+        assertThat(nested.replyToCommentId()).isEqualTo("700");
+        assertThat(nested.replyTo()).isNotNull();
+        ArgumentCaptor<Comment> saved = ArgumentCaptor.forClass(Comment.class);
+        verify(commentMapper, times(2)).insert(saved.capture());
+        Comment deeperTarget = saved.getAllValues().getLast();
+        when(commentMapper.selectById(deeperTarget.getId())).thenReturn(deeperTarget);
+        PostDtos.CommentDto deeper = postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("[E2E_TEST] 继续楼内交流", null, deeperTarget.getId()), currentUser);
+        assertThat(deeper.parentId()).isEqualTo("600");
+
+        ArgumentCaptor<com.luminous.api.notification.NotificationEvent> notice =
+                ArgumentCaptor.forClass(com.luminous.api.notification.NotificationEvent.class);
+        verify(eventPublisher, times(2)).publishEvent(notice.capture());
+        assertThat(notice.getAllValues()).extracting(com.luminous.api.notification.NotificationEvent::receiverId)
+                .containsExactly(2L, 3L);
+        assertThat(notice.getAllValues()).allMatch(event -> event.type().equals("REPLY_COMMENT"));
+
+        when(commentMapper.selectList(any())).thenReturn(List.of(root, child));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(sampleAuthor));
+        PostDtos.CommentDto listed = postService.comments(500L, null).getLast();
+        assertThat(listed.parentId()).isEqualTo("600");
+        when(commentMapper.selectById(700L)).thenReturn(child);
+        assertThat(postService.voteComment(700L, 1, currentUser).parentId()).isEqualTo("600");
+    }
+
+    @Test
+    void replyRejectsMissingForeignTargetsAndAllImagesBeforeWrites() {
+        assertThatThrownBy(() -> postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("[E2E_TEST] 无效对象", null, 999L), currentUser))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> assertThat(ex.getCode()).isEqualTo("REPLY_TARGET_NOT_FOUND"));
+        Comment foreign = replyFixture(700L, 2L, null); foreign.setPostId(501L);
+        when(commentMapper.selectById(700L)).thenReturn(foreign);
+        assertThatThrownBy(() -> postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("[E2E_TEST] 跨帖子对象", null, 700L), currentUser))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> assertThat(ex.getCode()).isEqualTo("REPLY_TARGET_NOT_FOUND"));
+        assertThatThrownBy(() -> postService.addComment(500L,
+                new PostDtos.CreateCommentRequest("[E2E_TEST] 图片回复", "/api/files/image.png", 600L), currentUser))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> assertThat(ex.getCode()).isEqualTo("REPLY_IMAGE_NOT_ALLOWED"));
+        verify(commentMapper, never()).insert(any(Comment.class));
+        verifyNoInteractions(uploadService);
+    }
+
+    @Test
+    void deletingRootDoesNotCascadeOtherPeoplesReplies() {
+        Comment root = replyFixture(600L, 1L, null);
+        when(commentMapper.selectById(600L)).thenReturn(root);
+        postService.deleteComment(600L, currentUser);
+        verify(commentMapper).deleteById(600L);
+        verify(commentMapper, never()).delete(any());
+        verify(postMapper).updateCommentsCountAtomic(500L, -1);
+    }
+
+    private Comment replyFixture(long id, long authorId, Long parentId) {
+        Comment comment = new Comment();
+        comment.setId(id); comment.setPostId(500L); comment.setAuthorId(authorId);
+        comment.setParentId(parentId); comment.setContent("[E2E_TEST] 楼内测试");
+        comment.setVotes(0); comment.setCreatedAt(LocalDateTime.now());
+        return comment;
     }
 
     @Test

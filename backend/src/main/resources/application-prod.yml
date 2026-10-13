@@ -1,4 +1,7 @@
 app:
+  growth:
+    # 正式奖励规则未确认前，生产默认关闭；启用时必须显式配置全部奖励额度。
+    enabled: false
   snowflake:
     # 多实例必须显式分配节点，禁止静默使用开发环境默认值。
     worker-id: ${SNOWFLAKE_WORKER_ID}

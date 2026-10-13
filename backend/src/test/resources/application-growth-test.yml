@@ -1,0 +1,38 @@
+spring:
+  datasource:
+    # 固定独立开发端口，不允许通过测试环境变量覆盖成生产或共享端口。
+    url: jdbc:mysql://127.0.0.1:33067/${GROWTH_TEST_DB_NAME:luminous}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${GROWTH_TEST_DB_USER}
+    password: ${GROWTH_TEST_DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 63797
+  flyway:
+    enabled: true
+app:
+  growth:
+    enabled: true
+    provisional: true
+    rule-version: e2e-growth-boundaries
+    rewards:
+      CHECK_IN: { amount: 5, daily-cap: 15 }
+      POST: { amount: 15, daily-cap: 30 }
+      COMMENT: { amount: 3, daily-cap: 15 }
+      LIKE: { amount: 2, daily-cap: 10 }
+      READ: { amount: 1, daily-cap: 3 }
+    read-enabled: true
+    read-minimum-seconds: 10
+    read-session-seconds: 60
+    readers-per-reward: 2
+  rocketmq:
+    enabled: false
+  reliable-events:
+    dispatch-enabled: false
+  reconciliation:
+    cron: "-"
+  upload:
+    recovery-enabled: false
+  storage:
+    type: local

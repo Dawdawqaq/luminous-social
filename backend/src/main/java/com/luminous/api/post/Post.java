@@ -16,7 +16,7 @@ public class Post {
     private Integer votes;
     private Integer commentsCount;
     private Boolean isPublic;
-    private String status;  // PUBLISHED | BANNED
+    private String status;  // 正常内容兼容 NORMAL 与历史 PUBLISHED，封禁为 BANNED。
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

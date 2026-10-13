@@ -8,8 +8,12 @@ import java.time.LocalDateTime;
 public class Comment {
     private Long id;
     private Long postId;
+    private Long parentId;
+    private Long replyToCommentId;
+    private Long replyToUserId;
     private Long authorId;
     private String content;
+    private String imageUrl;
     private Integer votes;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -30,6 +34,13 @@ public class Comment {
         this.postId = postId;
     }
 
+    public Long getParentId() { return parentId; }
+    public void setParentId(Long parentId) { this.parentId = parentId; }
+    public Long getReplyToCommentId() { return replyToCommentId; }
+    public void setReplyToCommentId(Long replyToCommentId) { this.replyToCommentId = replyToCommentId; }
+    public Long getReplyToUserId() { return replyToUserId; }
+    public void setReplyToUserId(Long replyToUserId) { this.replyToUserId = replyToUserId; }
+
     public Long getAuthorId() {
         return authorId;
     }
@@ -45,6 +56,10 @@ public class Comment {
     public void setContent(String content) {
         this.content = content;
     }
+
+    public String getImageUrl() { return imageUrl; }
+
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
 
     public Integer getVotes() {
         return votes;

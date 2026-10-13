@@ -26,9 +26,11 @@ public class CheckInService {
     private final CommunityMemberMapper members;
     private final CheckInRepository repository;
     private final Clock clock;
+    private final org.springframework.context.ApplicationEventPublisher events;
     public CheckInService(StringRedisTemplate redis, CommunityService communities, CommunityMemberMapper members,
-                          CheckInRepository repository, Clock clock) {
+                          CheckInRepository repository, Clock clock, org.springframework.context.ApplicationEventPublisher events) {
         this.redis = redis; this.communities = communities; this.members = members; this.repository = repository; this.clock = clock;
+        this.events = events;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -44,6 +46,7 @@ public class CheckInService {
         }
         LocalDate today = LocalDate.now(clock);
         boolean first = repository.insert(community.getId(), user.id(), today);
+        if (first) events.publishEvent(new com.luminous.api.growth.GrowthEvent.CheckedIn(user.id(), community.getId(), today));
         CheckInDtos.CheckInStats stats = stats(community.getId(), user.id(), YearMonth.from(today), today);
         AfterCommit.run(() -> project(slug, user.id(), today));
         return new CheckInDtos.CheckInResponse(first, stats.totalDays(), stats.consecutiveDays(), first ? "签到成功" : "今日已签到");

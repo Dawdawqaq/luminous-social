@@ -5,8 +5,10 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
 
 public interface PostMapper extends BaseMapper<Post> {
+    @org.apache.ibatis.annotations.Select("SELECT * FROM posts WHERE id=#{id} FOR UPDATE")
+    Post selectForUpdate(@Param("id") Long id);
 
-    @org.apache.ibatis.annotations.Select("SELECT p.* FROM posts p WHERE p.is_public=TRUE AND p.created_at>=#{since} "
+    @org.apache.ibatis.annotations.Select("SELECT p.* FROM posts p WHERE p.is_public=TRUE AND p.status IN ('NORMAL','PUBLISHED') AND p.created_at>=#{since} "
             + "AND p.created_at<=#{before} AND EXISTS (SELECT 1 FROM user_follows f WHERE f.follower_id=#{userId} "
             + "AND f.following_id=p.author_id) ORDER BY p.created_at DESC,p.id DESC LIMIT #{limit} OFFSET #{offset}")
     java.util.List<Post> selectFollowedFeed(@Param("userId") Long userId,

@@ -94,7 +94,31 @@ public class PostController {
         return ApiResponse.ok(postService.comments(postId, currentUser));
     }
 
+    @Operation(summary = "按票数与时间分批获取评论楼层")
+    @GetMapping("/posts/{postId}/comment-floors")
+    public ApiResponse<PostDtos.CommentSlice<PostDtos.CommentFloorDto>> commentFloors(
+            @PathVariable Long postId, @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "10") int size, @AuthenticationPrincipal CurrentUser currentUser) {
+        return ApiResponse.ok(postService.commentFloors(postId, cursor, size, currentUser));
+    }
+
+    @Operation(summary = "分批获取指定楼内的回复")
+    @GetMapping("/posts/{postId}/comments/{rootId}/replies")
+    public ApiResponse<PostDtos.CommentSlice<PostDtos.CommentDto>> replies(
+            @PathVariable Long postId, @PathVariable Long rootId, @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "5") int size, @AuthenticationPrincipal CurrentUser currentUser) {
+        return ApiResponse.ok(postService.commentReplies(postId, rootId, cursor, size, currentUser));
+    }
+
+    @Operation(summary = "定位通知对应的评论及其楼层")
+    @GetMapping("/posts/{postId}/comments/{commentId}/context")
+    public ApiResponse<PostDtos.CommentContext> commentContext(@PathVariable Long postId,@PathVariable Long commentId,
+            @AuthenticationPrincipal CurrentUser user) {
+        return ApiResponse.ok(postService.commentContext(postId,commentId,user));
+    }
+
     @Operation(summary = "发表评论")
+    @com.luminous.api.security.Idempotent
     @PostMapping("/posts/{postId}/comments")
     public ApiResponse<PostDtos.CommentDto> addComment(@PathVariable Long postId,
                                                        @Valid @RequestBody PostDtos.CreateCommentRequest request,

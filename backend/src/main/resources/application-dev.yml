@@ -1,0 +1,14 @@
+app:
+  growth:
+    # 仅开发环境采用参考规则；这些数值不是已确认的正式运营参数。
+    enabled: ${GROWTH_ENABLED:true}
+    provisional: true
+    rule-version: dev-reference-20261011
+    rewards:
+      CHECK_IN: { amount: 5, daily-cap: 15 }
+      POST: { amount: 15, daily-cap: 30 }
+      COMMENT: { amount: 3, daily-cap: 15 }
+      LIKE: { amount: 2, daily-cap: 500 }
+      READ: { amount: 1, daily-cap: 100 }
+    # 阅读资格尚未定稿，普通详情访问不奖励；开发集成测试单独显式启用受控阅读会话。
+    read-enabled: false

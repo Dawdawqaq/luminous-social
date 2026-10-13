@@ -15,8 +15,11 @@ public class VoteCommandService {
     private final VoteRepository votes;
     private final ReliableEventRepository events;
     private final ObjectMapper mapper;
-    public VoteCommandService(VoteRepository votes, ReliableEventRepository events, ObjectMapper mapper) {
+    private final org.springframework.context.ApplicationEventPublisher publisher;
+    public VoteCommandService(VoteRepository votes, ReliableEventRepository events, ObjectMapper mapper,
+                              org.springframework.context.ApplicationEventPublisher publisher) {
         this.votes = votes; this.events = events; this.mapper = mapper;
+        this.publisher = publisher;
     }
 
     @Transactional
@@ -31,6 +34,7 @@ public class VoteCommandService {
         int total = Math.addExact(clock.acceptedTotal(), delta);
         VoteMessage message = new VoteMessage(postId, userId, value, delta, System.currentTimeMillis(), UUID.randomUUID().toString(), version);
         votes.accept(postId, userId, value, version, total);
+        publisher.publishEvent(new com.luminous.api.growth.GrowthEvent.Liked("POST", postId, userId));
         events.insert(new ReliableEventRepository.Event(message.msgId(), "VOTE", postId, userId, version, serialize(message), "PENDING"));
         return new Accepted(message, total);
     }

@@ -21,6 +21,17 @@ public class UploadService {
     public UploadService(UploadedFileMapper files, StorageProvider storage, UploadOperationService operations) {
         this.files = files; this.storage = storage; this.operations = operations;
     }
+
+    /** 评论仅允许引用当前用户通过上传接口提交的图片。 */
+    public String requireOwnedImage(String url, CurrentUser user) {
+        UploadedFile file = files.selectOne(new LambdaQueryWrapper<UploadedFile>().eq(UploadedFile::getUrl, url));
+        if (file == null || !java.util.Objects.equals(file.getUserId(), user.id())
+                || file.getContentType() == null
+                || !java.util.Set.of("image/jpeg", "image/png", "image/gif", "image/webp").contains(file.getContentType())) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_COMMENT_IMAGE", "请重新上传自己的图片后发表评论");
+        }
+        return file.getUrl();
+    }
     @Transactional(timeout = 60)
     public UploadDtos.UploadResponse uploadImage(MultipartFile file, CurrentUser user) {
         if (user == null) { throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录"); }

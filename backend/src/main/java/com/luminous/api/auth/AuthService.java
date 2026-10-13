@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import com.luminous.api.cache.UserStatsCacheService;
+import com.luminous.api.growth.GrowthEvent;
+import com.luminous.api.growth.GrowthQueryService;
 
 @Service
 public class AuthService {
@@ -27,6 +29,7 @@ public class AuthService {
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
     private final UserStatsCacheService userStatsCacheService;
     private final com.luminous.api.feed.FeedService feedService;
+    private final GrowthQueryService growthQueries;
 
     public AuthService(
             UserMapper userMapper,
@@ -36,7 +39,8 @@ public class AuthService {
             UserFollowMapper userFollowMapper,
             org.springframework.context.ApplicationEventPublisher eventPublisher,
             UserStatsCacheService userStatsCacheService,
-            @org.springframework.context.annotation.Lazy com.luminous.api.feed.FeedService feedService
+            @org.springframework.context.annotation.Lazy com.luminous.api.feed.FeedService feedService,
+            GrowthQueryService growthQueries
     ) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
@@ -46,6 +50,7 @@ public class AuthService {
         this.eventPublisher = eventPublisher;
         this.userStatsCacheService = userStatsCacheService;
         this.feedService = feedService;
+        this.growthQueries = growthQueries;
     }
 
     @Transactional
@@ -69,6 +74,7 @@ public class AuthService {
 
         user.setIsBanned(false);
         userMapper.insert(user);
+        eventPublisher.publishEvent(new GrowthEvent.Registered(user.getId()));
         return new AuthDtos.AuthResponse(jwtService.createToken(user.getId(), user.getUsername(), user.getRole()), toDto(user, null));
     }
 
@@ -137,7 +143,8 @@ public class AuthService {
                 user.getJoinDate(),
                 isFollowing,
                 user.getRole(),
-                Boolean.TRUE.equals(user.getIsBanned())
+                Boolean.TRUE.equals(user.getIsBanned()),
+                growthQueries.progress(user.getId(), 0)
         );
     }
 
@@ -246,7 +253,8 @@ public class AuthService {
                 user.getJoinDate(),
                 isFollowing,
                 user.getRole(),
-                Boolean.TRUE.equals(user.getIsBanned())
+                Boolean.TRUE.equals(user.getIsBanned()),
+                growthQueries.progress(user.getId(), 0)
         );
     }
 

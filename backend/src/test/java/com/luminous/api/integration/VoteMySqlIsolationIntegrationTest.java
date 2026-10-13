@@ -55,7 +55,7 @@ class VoteMySqlIsolationIntegrationTest {
         jdbc.update("INSERT INTO post_vote_clocks(post_id,accepted_version,accepted_total) VALUES(1,0,0)");
         jdbc.update("INSERT INTO vote_states VALUES(1,1,0,0,0,0),(1,2,0,0,0,0)");
         votes = new VoteRepository(jdbc);
-        commands = new VoteCommandService(votes, new ReliableEventRepository(jdbc), new ObjectMapper());
+        commands = new VoteCommandService(votes, new ReliableEventRepository(jdbc), new ObjectMapper(), event -> {});
     }
 
     @Test

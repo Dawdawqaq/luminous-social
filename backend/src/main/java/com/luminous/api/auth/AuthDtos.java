@@ -49,10 +49,12 @@ public final class AuthDtos {
             String joinDate,
             Boolean isFollowing,
             String role,
-            Boolean isBanned
+            Boolean isBanned,
+            com.luminous.api.growth.GrowthDtos.Progress growth
     ) {
     }
 
     public record Stats(long posts, long followers, long following) {
     }
+
 }

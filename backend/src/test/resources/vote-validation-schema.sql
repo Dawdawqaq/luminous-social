@@ -60,8 +60,12 @@ CREATE TABLE posts (
 CREATE TABLE comments (
     id BIGINT PRIMARY KEY,
     post_id BIGINT NOT NULL,
+    parent_id BIGINT,
+    reply_to_comment_id BIGINT,
+    reply_to_user_id BIGINT,
     author_id BIGINT NOT NULL,
     content VARCHAR(1000) NOT NULL,
+    image_url VARCHAR(512),
     votes INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

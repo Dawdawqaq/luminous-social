@@ -45,6 +45,9 @@ class AuthServiceTest {
     @Mock
     private com.luminous.api.cache.UserStatsCacheService userStatsCacheService;
 
+    @Mock private com.luminous.api.growth.GrowthQueryService growthQueries;
+    @Mock private com.luminous.api.feed.FeedService feedService;
+
     @InjectMocks
     private AuthService authService;
 

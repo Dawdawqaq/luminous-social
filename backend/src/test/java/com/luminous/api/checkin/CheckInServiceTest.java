@@ -22,6 +22,7 @@ class CheckInServiceTest {
     @Mock CommunityService communities;
     @Mock CommunityMemberMapper members;
     @Mock CheckInRepository repository;
+    @Mock org.springframework.context.ApplicationEventPublisher events;
     CheckInService service;
     CurrentUser user = new CurrentUser(100L, "test_user", "USER");
     LocalDate today = LocalDate.of(2026, 10, 1);
@@ -30,7 +31,7 @@ class CheckInServiceTest {
         lenient().when(communities.requireBySlug("design")).thenReturn(community);
         lenient().when(redis.opsForValue()).thenReturn(values);
         service = new CheckInService(redis, communities, members, repository,
-                Clock.fixed(Instant.parse("2026-09-30T16:00:00Z"), ZoneId.of("Asia/Shanghai")));
+                Clock.fixed(Instant.parse("2026-09-30T16:00:00Z"), ZoneId.of("Asia/Shanghai")), events);
     }
     @Test void nonMemberCannotCheckIn() {
         when(members.selectCount(any())).thenReturn(0L);
