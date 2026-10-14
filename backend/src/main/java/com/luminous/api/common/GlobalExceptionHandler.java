@@ -13,6 +13,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.luminous.api.auth.FollowRateLimitException.class)
+    public ResponseEntity<ApiResponse<Void>> handleFollowRateLimit(com.luminous.api.auth.FollowRateLimitException ex) {
+        return ResponseEntity.status(ex.getStatus()).header("Retry-After",String.valueOf(ex.getRetryAfterSeconds()))
+                .body(ApiResponse.fail(ex.getCode(),ex.getMessage()));
+    }
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(com.luminous.api.post.CommentRateLimitException.class)

@@ -45,11 +45,40 @@ class AuthServiceTest {
     @Mock
     private com.luminous.api.cache.UserStatsCacheService userStatsCacheService;
 
-    @Mock private com.luminous.api.growth.GrowthQueryService growthQueries;
-    @Mock private com.luminous.api.feed.FeedService feedService;
-
     @InjectMocks
     private AuthService authService;
+    @Mock private com.luminous.api.growth.GrowthQueryService growthQueries;
+    @Mock private FollowActionPolicy followPolicy;
+    @Mock private com.luminous.api.feed.FeedService feedService;
+
+    @Test
+    void repeatedFollowReturnsDesiredStateWithoutPublishingOrUpdatingCounts() {
+        when(userMapper.selectOne(any())).thenReturn(sampleUser);
+        when(followPolicy.change(42L,100L,true)).thenReturn(false);
+        assertThat(authService.follow("test_user",new CurrentUser(42L,"[E2E_TEST] actor")).isFollowing()).isTrue();
+        verifyNoInteractions(eventPublisher,feedService);
+        verify(userStatsCacheService,never()).incrementFollowerCount(any());
+        verify(followPolicy,never()).shouldNotify(anyLong(),anyLong());
+    }
+
+    @Test
+    void repeatedUnfollowReturnsDesiredStateWithoutNewQuotaOrEffects() {
+        when(userMapper.selectOne(any())).thenReturn(sampleUser);
+        assertThat(authService.unfollow("test_user",new CurrentUser(42L,"[E2E_TEST] actor")).isFollowing()).isFalse();
+        verifyNoInteractions(eventPublisher,feedService);
+        verify(userStatsCacheService,never()).decrementFollowerCount(any());
+    }
+
+    @Test
+    void newFollowPublishesOnlyWhenNotificationWindowAllows() {
+        when(userMapper.selectOne(any())).thenReturn(sampleUser);
+        when(followPolicy.change(42L,100L,true)).thenReturn(true);
+        when(followPolicy.shouldNotify(42L,100L)).thenReturn(true);
+        authService.follow("test_user",new CurrentUser(42L,"[E2E_TEST] actor"));
+        verify(userStatsCacheService).incrementFollowerCount(100L);
+        verify(userStatsCacheService).incrementFollowingCount(42L);
+        verify(eventPublisher).publishEvent(any(com.luminous.api.notification.NotificationEvent.class));
+    }
 
     private User sampleUser;
 

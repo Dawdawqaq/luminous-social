@@ -42,6 +42,11 @@ class FeedCacheCheckInIntegrationTest extends AbstractVoteIntegrationTest {
     @MockitoSpyBean NotificationMQProducer notifications;
     @MockitoSpyBean Clock clock;
 
+    private void advanceFollowInterval() {
+        // 本测试验证动态缓存，仅推进隔离 H2 用户的间隔，不关闭生产限频逻辑。
+        jdbcTemplate.update("UPDATE follow_action_gates SET last_changed_at=DATEADD('SECOND',-2,CURRENT_TIMESTAMP) WHERE user_id=?",voter.id());
+    }
+
     @Test void twoNodesSeeModificationAndDeletionWithoutLocalCopies() {
         Long id = createPost(true);
         PostCacheService second = new PostCacheService(redisTemplate, redisson, posts, mapper);
@@ -107,6 +112,7 @@ class FeedCacheCheckInIntegrationTest extends AbstractVoteIntegrationTest {
         AuthDtos.AuthResponse bigAuth = register("big_author");
         CurrentUser big = new CurrentUser(Long.parseLong(bigAuth.user().id()), bigAuth.user().username(), "USER");
         authService.follow(author.username(), voter);
+        advanceFollowInterval();
         authService.follow(big.username(), voter);
         LocalDateTime timestamp = LocalDateTime.now().minusMinutes(1).withNano(123000000);
         List<Long> expected = new ArrayList<>();
@@ -148,6 +154,7 @@ class FeedCacheCheckInIntegrationTest extends AbstractVoteIntegrationTest {
         assertThat(stats.getUserStats(author.id()).followers()).isEqualTo(1);
         assertThat(stats.getUserStats(voter.id()).following()).isEqualTo(1);
         redisTemplate.opsForZSet().add(CacheConstants.FEED_INBOX_KEY + voter.id(), String.valueOf(history), System.currentTimeMillis());
+        advanceFollowInterval();
         authService.unfollow(author.username(), voter);
         assertThat(redisTemplate.opsForZSet().zCard(CacheConstants.FEED_INBOX_KEY + voter.id())).isZero();
         authService.unfollow(author.username(), voter);

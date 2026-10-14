@@ -889,6 +889,160 @@ class GrowthMySqlIntegrationTest {
         } finally { executor.shutdownNow(); assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue(); }
     }
 
+    /** 用户标识契约复用独立开发数据库、鉴权链和精确清理，覆盖全部受影响接口。 */
+    @Nested
+    class UserIdentifierContractTests {
+        private CurrentUser registerNumericUsername(String username) throws Exception {
+            var registration = new AuthDtos.RegisterRequest(username, marker + " 数字用户名", "Password123!");
+            // 校验真实注册 DTO 后复用注册业务；本组验证用户接口，不绕过注册验证码接口。
+            try (var factory = jakarta.validation.Validation.buildDefaultValidatorFactory()) {
+                assertThat(factory.getValidator().validate(registration)).isEmpty();
+            }
+            long id = Long.parseLong(auth.register(registration).user().id());
+            userIds.add(id);
+            return new CurrentUser(id, username, "USER");
+        }
+
+        private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request(
+                String operation, String identifier, String type) {
+            return request(operation, identifier, type, UUID.randomUUID().toString());
+        }
+
+        private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request(
+                String operation, String identifier, String type, String key) {
+            String path = "/api/users/" + identifier;
+            var request = switch (operation) {
+                case "follow" -> post(path + "/follow");
+                case "unfollow" -> delete(path + "/follow");
+                case "followers" -> get(path + "/followers");
+                case "following" -> get(path + "/following");
+                default -> get(path);
+            };
+            request.header("Authorization", "Bearer " + peerToken).header("X-Bypass-Rate-Limit", "true")
+                    .header("X-Idempotency-Key", key);
+            if (type != null) request.queryParam("identifierType", type);
+            return request;
+        }
+
+        private void assertAllEndpointsFail(String identifier, String type, int code, String error) throws Exception {
+            for (String operation : List.of("profile", "follow", "unfollow", "followers", "following")) {
+                mvc.perform(request(operation, identifier, type)).andExpect(status().is(code))
+                        .andExpect(jsonPath("$.success").value(false)).andExpect(jsonPath("$.error.code").value(error));
+            }
+        }
+
+        private void awaitFollowCooldown() throws InterruptedException {
+            // 等待数据库真实一秒间隔，不修改限流时钟、记录或生产开关。
+            for (int attempt = 0; attempt < 10; attempt++) {
+                long micros = jdbc.queryForObject("SELECT GREATEST(0,TIMESTAMPDIFF(MICROSECOND,CURRENT_TIMESTAMP(6),"
+                        + "last_changed_at + INTERVAL 1 SECOND)) FROM follow_action_gates WHERE user_id=?", Long.class, peer.id());
+                if (micros == 0) return;
+                Thread.sleep(Math.min(1100, (micros + 999) / 1000 + 10));
+            }
+            throw new IllegalStateException("[E2E_TEST] 等待关注冷却超时");
+        }
+
+        @Test void ambiguousLegacyIdentifierRejectsAllEndpointsWithoutChangingExistingFollow() throws Exception {
+            CurrentUser numeric = registerNumericUsername(String.valueOf(author.id()));
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE id=? OR username=?", Long.class,
+                    author.id(), numeric.username())).isEqualTo(2);
+            auth.follow(author.username(), peer);
+            String gate = jdbc.queryForObject("SELECT CAST(last_changed_at AS CHAR) FROM follow_action_gates WHERE user_id=?", String.class, peer.id());
+            long notifications = jdbc.queryForObject("SELECT COUNT(*) FROM reliable_events WHERE user_id=?", Long.class, peer.id());
+            assertAllEndpointsFail(numeric.username(), null, 409, "USER_IDENTIFIER_AMBIGUOUS");
+            assertThat(jdbc.queryForObject("SELECT following_id FROM user_follows WHERE follower_id=?", Long.class, peer.id())).isEqualTo(author.id());
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM follow_actions WHERE user_id=?", Long.class, peer.id())).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM follow_notification_windows WHERE actor_id=?", Long.class, peer.id())).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT CAST(last_changed_at AS CHAR) FROM follow_action_gates WHERE user_id=?", String.class, peer.id())).isEqualTo(gate);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reliable_events WHERE user_id=?", Long.class, peer.id())).isEqualTo(notifications);
+            assertThat(auth.getUserProfile(author.username(), peer).stats().followers()).isEqualTo(1);
+            assertThat(auth.getUserProfile(numeric.username(), peer, com.luminous.api.auth.UserIdentifierType.USERNAME).stats().followers()).isZero();
+        }
+
+        @ParameterizedTest @ValueSource(strings = {"username", "id"})
+        void explicitTypeSelectsCorrectTargetForAllFiveEndpoints(String type) throws Exception {
+            CurrentUser numeric = registerNumericUsername(String.valueOf(author.id()));
+            long target = type.equals("username") ? numeric.id() : author.id();
+            long other = type.equals("username") ? author.id() : numeric.id();
+            String identifier = numeric.username();
+            mvc.perform(request("profile", identifier, type.toUpperCase(Locale.ROOT))).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(String.valueOf(target)));
+            mvc.perform(request("followers", identifier, type)).andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+            mvc.perform(request("following", identifier, type)).andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(0));
+            mvc.perform(request("follow", identifier, type)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(String.valueOf(target))).andExpect(jsonPath("$.data.isFollowing").value(true));
+            mvc.perform(request("unfollow", identifier, type)).andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.error.code").value("FOLLOW_RATE_LIMITED"));
+            mvc.perform(request("followers", identifier, type)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items[0].id").value(String.valueOf(peer.id()))).andExpect(jsonPath("$.data.total").value(1));
+            mvc.perform(request("following", String.valueOf(peer.id()), "id")).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.items[0].id").value(String.valueOf(target)));
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_follows WHERE follower_id=? AND following_id=?", Long.class, peer.id(), other)).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM follow_notification_windows WHERE actor_id=? AND receiver_id=?", Long.class, peer.id(), target)).isEqualTo(1);
+            awaitFollowCooldown();
+            mvc.perform(request("unfollow", identifier, type)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(String.valueOf(target))).andExpect(jsonPath("$.data.isFollowing").value(false));
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_follows WHERE follower_id=?", Long.class, peer.id())).isZero();
+            assertThat(auth.currentUser(peer).stats().following()).isZero();
+            assertThat(auth.getUserProfile(identifier, peer, com.luminous.api.auth.UserIdentifierType.parse(type)).stats().followers()).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM follow_actions WHERE user_id=?", Long.class, peer.id())).isEqualTo(2);
+        }
+
+        @Test void legacyLookupPreservesUnambiguousNamesIdsAndLongNumericUsername() throws Exception {
+            for (String identifier : List.of(author.username(), String.valueOf(author.id()))) {
+                mvc.perform(request("profile", identifier, null)).andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.id").value(String.valueOf(author.id())));
+                mvc.perform(request("followers", identifier, null)).andExpect(status().isOk());
+                mvc.perform(request("following", identifier, null)).andExpect(status().isOk());
+                mvc.perform(request("follow", identifier, null)).andExpect(status().isOk()).andExpect(jsonPath("$.data.isFollowing").value(true));
+                awaitFollowCooldown();
+                mvc.perform(request("unfollow", identifier, null)).andExpect(status().isOk()).andExpect(jsonPath("$.data.isFollowing").value(false));
+                awaitFollowCooldown();
+            }
+            String digits = "9".repeat(32 - String.valueOf(author.id()).length()) + author.id();
+            CurrentUser numeric = registerNumericUsername(digits);
+            mvc.perform(request("profile", digits, null)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(String.valueOf(numeric.id())));
+            mvc.perform(request("follow", digits, "username")).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(String.valueOf(numeric.id())));
+        }
+
+        @Test void invalidTypeInvalidIdAndMissingNamespaceDoNotFallBackOrConsumeQuota() throws Exception {
+            CurrentUser numeric = registerNumericUsername(String.valueOf(author.id()));
+            assertAllEndpointsFail(numeric.username(), "unknown", 400, "INVALID_USER_IDENTIFIER_TYPE");
+            for (String invalid : List.of("abc", "0", "-1", "9223372036854775808")) {
+                assertAllEndpointsFail(invalid, "id", 400, "INVALID_USER_ID");
+            }
+            assertAllEndpointsFail(String.valueOf(numeric.id()), "username", 404, "USER_NOT_FOUND");
+            assertAllEndpointsFail(String.valueOf(Long.MAX_VALUE), "id", 404, "USER_NOT_FOUND");
+            assertAllEndpointsFail("missing_" + UUID.randomUUID(), null, 404, "USER_NOT_FOUND");
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM follow_actions WHERE user_id=?", Long.class, peer.id())).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM follow_action_gates WHERE user_id=?", Long.class, peer.id())).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM user_follows WHERE follower_id=?", Long.class, peer.id())).isZero();
+        }
+
+        @Test void sameUserMatchingIdAndUsernameIsNotAmbiguous() throws Exception {
+            CurrentUser numeric = registerNumericUsername(String.valueOf(author.id()));
+            jdbc.update("UPDATE users SET username=? WHERE id=?", String.valueOf(numeric.id()), numeric.id());
+            mvc.perform(request("profile", String.valueOf(numeric.id()), null)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(String.valueOf(numeric.id())));
+        }
+
+        @Test void idempotencyKeyCannotReplayFollowForAnotherIdentifierNamespace() throws Exception {
+            CurrentUser numeric = registerNumericUsername(String.valueOf(author.id()));
+            String key = UUID.randomUUID().toString();
+            for (int attempt = 0; attempt < 2; attempt++) {
+                var result = mvc.perform(request("follow", numeric.username(), "username", key))
+                        .andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(String.valueOf(numeric.id())));
+                if (attempt == 1) result.andExpect(header().string("Idempotency-Replayed", "true"));
+            }
+            mvc.perform(request("follow", numeric.username(), "id", key))
+                    .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("IDEMPOTENCY_MISMATCH"));
+            assertThat(jdbc.queryForObject("SELECT following_id FROM user_follows WHERE follower_id=?", Long.class, peer.id())).isEqualTo(numeric.id());
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM follow_actions WHERE user_id=?", Long.class, peer.id())).isEqualTo(1);
+        }
+    }
+
     @AfterEach
     void cleanup() {
         properties.setEnabled(true); properties.setReadEnabled(true);

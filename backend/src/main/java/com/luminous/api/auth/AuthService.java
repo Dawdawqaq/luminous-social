@@ -3,6 +3,9 @@ package com.luminous.api.auth;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.luminous.api.common.SnowflakeIdGenerator;
 import com.luminous.api.common.BusinessException;
+import com.luminous.api.common.PageResponse;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.luminous.api.post.PostMapper;
 import com.luminous.api.security.CurrentUser;
 import com.luminous.api.security.JwtService;
@@ -30,6 +33,7 @@ public class AuthService {
     private final UserStatsCacheService userStatsCacheService;
     private final com.luminous.api.feed.FeedService feedService;
     private final GrowthQueryService growthQueries;
+    private final FollowActionPolicy followPolicy;
 
     public AuthService(
             UserMapper userMapper,
@@ -40,7 +44,7 @@ public class AuthService {
             org.springframework.context.ApplicationEventPublisher eventPublisher,
             UserStatsCacheService userStatsCacheService,
             @org.springframework.context.annotation.Lazy com.luminous.api.feed.FeedService feedService,
-            GrowthQueryService growthQueries
+            GrowthQueryService growthQueries, FollowActionPolicy followPolicy
     ) {
         this.userMapper = userMapper;
         this.postMapper = postMapper;
@@ -51,6 +55,7 @@ public class AuthService {
         this.userStatsCacheService = userStatsCacheService;
         this.feedService = feedService;
         this.growthQueries = growthQueries;
+        this.followPolicy = followPolicy;
     }
 
     @Transactional
@@ -103,11 +108,66 @@ public class AuthService {
     }
 
     public AuthDtos.UserDto getUserProfile(String identifier, CurrentUser currentUser) {
-        User user = findByUsernameOrId(identifier);
+        return getUserProfile(identifier, currentUser, UserIdentifierType.AUTO);
+    }
+
+    public AuthDtos.UserDto getUserProfile(String identifier, CurrentUser currentUser, UserIdentifierType identifierType) {
+        User user = findUser(identifier, identifierType);
         if (user == null) {
             throw new BusinessException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         }
         return toDto(user, currentUser);
+    }
+
+    public PageResponse<AuthDtos.FollowUserDto> listFollowers(String identifier, long page, long size) {
+        return listFollowers(identifier,page,size,null);
+    }
+
+    public PageResponse<AuthDtos.FollowUserDto> listFollowing(String identifier, long page, long size) {
+        return listFollowing(identifier,page,size,null);
+    }
+
+    public PageResponse<AuthDtos.FollowUserDto> listFollowers(String identifier,long page,long size,CurrentUser viewer) {
+        return listFollowers(identifier, page, size, viewer, UserIdentifierType.AUTO);
+    }
+    public PageResponse<AuthDtos.FollowUserDto> listFollowing(String identifier,long page,long size,CurrentUser viewer) {
+        return listFollowing(identifier, page, size, viewer, UserIdentifierType.AUTO);
+    }
+
+    public PageResponse<AuthDtos.FollowUserDto> listFollowers(String identifier, long page, long size, CurrentUser viewer,
+                                                            UserIdentifierType identifierType) {
+        return listFollowUsers(identifier, page, size, true, viewer, identifierType);
+    }
+
+    public PageResponse<AuthDtos.FollowUserDto> listFollowing(String identifier, long page, long size, CurrentUser viewer,
+                                                            UserIdentifierType identifierType) {
+        return listFollowUsers(identifier, page, size, false, viewer, identifierType);
+    }
+
+    private PageResponse<AuthDtos.FollowUserDto> listFollowUsers(String identifier, long page, long size, boolean followers,
+                                                               CurrentUser viewer, UserIdentifierType identifierType) {
+        if (page < 1 || size < 1 || size > 50 || page > Long.MAX_VALUE / size) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_PAGINATION", "页码必须大于零，每页条数必须为 1 到 50");
+        }
+        User target = findUser(identifier, identifierType);
+        if (target == null) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
+        }
+        // 联表分页只读取公开资料，避免逐个加载用户统计和关注关系。
+        Page<User> request = new Page<>(page, size);
+        IPage<User> result = followers
+                ? userFollowMapper.selectFollowers(request, target.getId())
+                : userFollowMapper.selectFollowing(request, target.getId());
+        List<Long> ids = result.getRecords().stream().map(User::getId).toList();
+        Set<Long> followed = viewer == null || ids.isEmpty() ? Set.of() : userFollowMapper.selectList(new LambdaQueryWrapper<UserFollow>()
+                .eq(UserFollow::getFollowerId,viewer.id()).in(UserFollow::getFollowingId,ids)).stream()
+                .map(UserFollow::getFollowingId).collect(Collectors.toSet());
+        List<AuthDtos.FollowUserDto> items = result.getRecords().stream()
+                .map(user -> new AuthDtos.FollowUserDto(String.valueOf(user.getId()), user.getUsername(),
+                        user.getDisplayName(), user.getAvatarUrl(), user.getBio(),followed.contains(user.getId())))
+                .toList();
+        return new PageResponse<>(items, result.getCurrent(), result.getSize(), result.getTotal(),
+                result.getCurrent() < result.getPages());
     }
 
     public AuthDtos.UserDto updateProfile(AuthDtos.UpdateProfileRequest request, CurrentUser currentUser) {
@@ -150,55 +210,44 @@ public class AuthService {
 
     @Transactional
     public AuthDtos.UserDto follow(String identifier, CurrentUser currentUser) {
+        return follow(identifier, currentUser, UserIdentifierType.AUTO);
+    }
+
+    @Transactional
+    public AuthDtos.UserDto follow(String identifier, CurrentUser currentUser, UserIdentifierType identifierType) {
         if (currentUser == null) throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
-        User target = findByUsernameOrId(identifier);
+        User target = findUser(identifier, identifierType);
         if (target == null) throw new BusinessException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         if (target.getId().equals(currentUser.id())) throw new BusinessException(HttpStatus.BAD_REQUEST, "CANNOT_FOLLOW_SELF", "不能关注自己");
         
-        boolean exists = userFollowMapper.exists(new LambdaQueryWrapper<UserFollow>()
-                .eq(UserFollow::getFollowerId, currentUser.id())
-                .eq(UserFollow::getFollowingId, target.getId()));
-                
-        if (!exists) {
-            UserFollow uf = new UserFollow();
-            uf.setFollowerId(currentUser.id());
-            uf.setFollowingId(target.getId());
-            userFollowMapper.insert(uf);
-            
+        if(followPolicy.change(currentUser.id(),target.getId(),true)) {
             userStatsCacheService.incrementFollowerCount(target.getId());
             userStatsCacheService.incrementFollowingCount(currentUser.id());
             com.luminous.api.common.AfterCommit.run(() -> feedService.invalidateInbox(currentUser.id()));
-
-            // 异步发布关注通知事件给被关注者
-            eventPublisher.publishEvent(new com.luminous.api.notification.NotificationEvent(
-                    currentUser.id(),
-                    target.getId(),
-                    "FOLLOW_USER",
-                    "USER",
-                    currentUser.id(),
-                    currentUser.username() + " 关注了你"
-            ));
+            if(followPolicy.shouldNotify(currentUser.id(),target.getId())) {
+                eventPublisher.publishEvent(new com.luminous.api.notification.NotificationEvent(currentUser.id(),target.getId(),
+                        "FOLLOW_USER","USER",currentUser.id(),currentUser.username()+" 关注了你"));
+            }
         }
-        return toDto(target, currentUser);
+        return toDtoWithFollowing(target,true);
     }
-    
+
     @Transactional
     public AuthDtos.UserDto unfollow(String identifier, CurrentUser currentUser) {
-        if (currentUser == null) throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
-        User target = findByUsernameOrId(identifier);
-        if (target == null) throw new BusinessException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
-        
-        int removed = userFollowMapper.delete(new LambdaQueryWrapper<UserFollow>()
-                .eq(UserFollow::getFollowerId, currentUser.id())
-                .eq(UserFollow::getFollowingId, target.getId()));
-                
-        if (removed > 0) {
+        return unfollow(identifier, currentUser, UserIdentifierType.AUTO);
+    }
+
+    @Transactional
+    public AuthDtos.UserDto unfollow(String identifier, CurrentUser currentUser, UserIdentifierType identifierType) {
+        if(currentUser == null) throw new BusinessException(HttpStatus.UNAUTHORIZED,"UNAUTHORIZED","请先登录");
+        User target = findUser(identifier, identifierType);
+        if(target == null) throw new BusinessException(HttpStatus.NOT_FOUND,"USER_NOT_FOUND","用户不存在");
+        if(followPolicy.change(currentUser.id(),target.getId(),false)) {
             userStatsCacheService.decrementFollowerCount(target.getId());
             userStatsCacheService.decrementFollowingCount(currentUser.id());
             com.luminous.api.common.AfterCommit.run(() -> feedService.invalidateInbox(currentUser.id()));
         }
-                
-        return toDto(target, currentUser);
+        return toDtoWithFollowing(target,false);
     }
 
     public List<AuthDtos.UserDto> searchUsers(String search, CurrentUser currentUser) {
@@ -262,13 +311,32 @@ public class AuthService {
         return userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, username));
     }
 
-    private User findByUsernameOrId(String identifier) {
+    /** 显式模式只查一个唯一键；旧兼容模式同一查询检测歧义，不依赖查询顺序选人。 */
+    private User findUser(String identifier, UserIdentifierType identifierType) {
+        if (identifierType == UserIdentifierType.ID) {
+            try {
+                if (identifier == null || !identifier.matches("[0-9]+")) throw new NumberFormatException();
+                long id = Long.parseLong(identifier);
+                if (id <= 0) throw new NumberFormatException();
+                return userMapper.selectById(id);
+            } catch (NumberFormatException error) {
+                throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_USER_ID", "用户 ID 必须为有效的正整数");
+            }
+        }
         if (identifier == null || identifier.isBlank()) return null;
+        if (identifierType == UserIdentifierType.USERNAME) return findByUsername(identifier);
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>().eq(User::getUsername, identifier);
         try {
             Long idVal = Long.parseLong(identifier.trim());
             wrapper.or().eq(User::getId, idVal);
-        } catch (NumberFormatException ignored) {}
-        return userMapper.selectOne(wrapper);
+        } catch (NumberFormatException ignored) {
+            return findByUsername(identifier);
+        }
+        List<User> matches = userMapper.selectList(wrapper);
+        if (matches.size() > 1) {
+            throw new BusinessException(HttpStatus.CONFLICT, "USER_IDENTIFIER_AMBIGUOUS",
+                    "用户标识同时匹配不同用户名和 ID，请通过 identifierType 指定 username 或 id");
+        }
+        return matches.isEmpty() ? null : matches.getFirst();
     }
 }

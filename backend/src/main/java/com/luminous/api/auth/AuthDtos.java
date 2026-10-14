@@ -57,4 +57,9 @@ public final class AuthDtos {
     public record Stats(long posts, long followers, long following) {
     }
 
+    public record FollowUserDto(String id, String username, String displayName, String avatar, String bio, boolean isFollowing) {
+        public FollowUserDto(String id,String username,String displayName,String avatar,String bio) {
+            this(id,username,displayName,avatar,bio,false);
+        }
+    }
 }
