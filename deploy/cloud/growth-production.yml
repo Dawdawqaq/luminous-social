@@ -1,0 +1,17 @@
+# 用户于 2026-10-16 授权按现有规则启用云端成长，阅读奖励保持关闭。
+app:
+  growth:
+    enabled: true
+    provisional: false
+    rule-version: prod-20261016-v1
+    thresholds: [0, 5, 15, 30, 50, 100, 200, 500, 1000, 2000, 3000, 6000, 10000, 18000, 30000, 60000, 100000, 300000]
+    rewards:
+      CHECK_IN: { amount: 5, daily-cap: 15 }
+      POST: { amount: 15, daily-cap: 30 }
+      COMMENT: { amount: 3, daily-cap: 15 }
+      LIKE: { amount: 2, daily-cap: 500 }
+      READ: { amount: 1, daily-cap: 100 }
+    minimum-post-characters: 12
+    minimum-comment-characters: 4
+    rewarded-comments-per-post-per-day: 2
+    read-enabled: false

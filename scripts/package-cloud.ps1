@@ -24,6 +24,7 @@ try {
     if (Test-Path -LiteralPath $packageRoot) { throw '部署包目录已存在，请稍后重新运行。' }
     New-Item -ItemType Directory -Path $packageRoot | Out-Null
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/cloud/compose.yml') -Destination $packageRoot
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/cloud/growth-production.yml') -Destination $packageRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/cloud/broker.conf') -Destination $packageRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/cloud/init-env.sh') -Destination $packageRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot 'deploy/cloud/.env.example') -Destination $packageRoot

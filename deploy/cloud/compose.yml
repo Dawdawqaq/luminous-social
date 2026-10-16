@@ -133,6 +133,7 @@ services:
     logging: *logging
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      SPRING_CONFIG_ADDITIONAL_LOCATION: file:/app/config/growth-production.yml
       SERVER_PORT: "8080"
       SERVER_TOMCAT_THREADS_MAX: "30"
       SERVER_TOMCAT_THREADS_MIN_SPARE: "4"
@@ -168,6 +169,7 @@ services:
       - "127.0.0.1:18081:8080"
     volumes:
       - uploads_data:/app/uploads
+      - ./growth-production.yml:/app/config/growth-production.yml:ro
     depends_on:
       mysql:
         condition: service_healthy
