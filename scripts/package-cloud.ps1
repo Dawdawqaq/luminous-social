@@ -15,7 +15,8 @@ function Invoke-CheckedCommand {
 # 构建在开发机器完成，云服务器只运行产物和运行时镜像。
 Push-Location $repoRoot
 try {
-    $mavenArguments = @('-f', 'backend/pom.xml', '-DskipTests', 'package')
+    # 先清理旧资源，避免已从源码移除的迁移脚本残留在发布 JAR。
+    $mavenArguments = @('-f', 'backend/pom.xml', '-DskipTests', 'clean', 'package')
     if ($Offline) { $mavenArguments = @('-o') + $mavenArguments }
     Invoke-CheckedCommand 'mvn' $mavenArguments
     Invoke-CheckedCommand 'npm.cmd' @('--prefix', 'frontend', 'run', 'build')

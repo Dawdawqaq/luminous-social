@@ -28,7 +28,7 @@ Redis 使用 `noeviction`，避免验证码、幂等凭证和锁被静默驱逐�
 
 ## 1. 在开发机器生成部署包
 
-在 PowerShell 仓库根目录执行。脚本重新构建 JAR 和前端，不在云服务器上安装 Maven、Node.js，也不将 `.env.dev`、`.env.prod` 或其他真实密钥打包。
+在 PowerShell 仓库根目录执行。脚本先清理 Maven 旧产物，再重新构建 JAR 和前端，避免已移除资源残留；不在云服务器上安装 Maven、Node.js，也不将 `.env.dev`、`.env.prod` 或其他真实密钥打包。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/package-cloud.ps1
