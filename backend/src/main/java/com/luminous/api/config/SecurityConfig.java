@@ -95,10 +95,11 @@ public class SecurityConfig {
                         })
                 )
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(new com.luminous.api.security.LumiChatAsyncMatcher()).permitAll()
                         .requestMatchers("/error", "/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/uploads/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/captcha/verify").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/auth/captcha").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/posts/**", "/api/communities/**", "/api/users/**", "/api/checkin/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/search", "/api/search/**", "/api/posts/**", "/api/communities/**", "/api/users/**", "/api/checkin/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/files/**").hasAnyAuthority("FILE_READER", "USER", "ADMIN")
                         .requestMatchers("/api/admin/**").hasAuthority("ADMIN")
                         .anyRequest().authenticated()

@@ -1,4 +1,52 @@
+export interface GrowthProgress {
+  experience: number;
+  level: number;
+  levelStartExperience: number;
+  nextLevelExperience: number | null;
+  experienceInLevel: number;
+  experienceToNextLevel: number;
+  progressPercent: number;
+  maxLevel: boolean;
+  badgeStage: number;
+  ruleVersion: string;
+  provisional: boolean;
+}
+
+export type SearchKind = "posts" | "communities" | "users";
+export interface LumiTask { id: string; commentId: string; status: string; message: string; replyId: string | null; retryable: boolean }
+export interface LumiStatus { enabled: boolean; name: string; webSearchAvailable: boolean; tasks: LumiTask[] }
+export interface SearchHit { id: string; kind: SearchKind; title: string; subtitle: string; snippet?: string; image?: string; url: string }
+export interface SearchGroup { kind: SearchKind; items: SearchHit[]; hasMore: boolean; unavailable: boolean }
+export interface SearchSuggestions { groups: SearchGroup[]; hint: string }
+export interface SearchSlice { kind: SearchKind; items: SearchHit[]; nextCursor: string | null; hasMore: boolean; windowLimited: boolean; hint: string }
+
+export interface GrowthOverview {
+  personal: GrowthProgress | null;
+  community: GrowthProgress | null;
+  communitySlug: string | null;
+  rewardsEnabled: boolean;
+  ruleVersion: string;
+  provisional: boolean;
+}
+
+export interface GrowthLedgerEntry {
+  id: string;
+  rewardId: string;
+  sourceKey: string;
+  communityId: string;
+  action: string;
+  contentType: string;
+  contentId: string;
+  rewardDate: string;
+  delta: number;
+  operation: string;
+  reason: string;
+  ruleVersion: string;
+  createdAt: string;
+}
+
 export interface User {
+  accountType?: "HUMAN" | "BOT";
   id: string;
   username: string;
   displayName: string;
@@ -14,12 +62,25 @@ export interface User {
   isFollowing?: boolean;
   role?: string;
   isBanned?: boolean;
+  growth?: GrowthProgress | null;
 }
 
-export interface Author {
+export interface FollowUser {
+  id: string;
   username: string;
   displayName: string;
   avatar?: string;
+  bio?: string;
+  isFollowing?: boolean;
+}
+
+export interface Author {
+  accountType?: "HUMAN" | "BOT";
+  username: string;
+  displayName: string;
+  avatar?: string;
+  personalGrowth?: GrowthProgress | null;
+  communityGrowth?: GrowthProgress | null;
 }
 
 export interface CommunityRef {
@@ -47,10 +108,17 @@ export interface Comment {
   id: string;
   author: Author;
   content: string;
+  image?: string | null;
+  parentId?: string | null;
+  replyToCommentId?: string | null;
+  replyTo?: Author | null;
   timestamp: string;
   votes: number;
   userVote?: number;
 }
+
+export interface CommentFloorSummary { id: string; root: Comment | null; replyCount: number }
+export interface CommentSlice<T> { items: T[]; nextCursor: string | null; hasNext: boolean; total: number }
 
 export interface Moderator {
   id: string;
@@ -60,6 +128,7 @@ export interface Moderator {
 }
 
 export interface Community {
+  category?: string;
   id: string;
   name: string;
   displayName?: string;
@@ -85,7 +154,13 @@ export interface RecommendedCommunity {
 
 export interface Notification {
   id: string;
-  type: 'VOTE' | 'COMMENT' | 'FOLLOW' | 'SYSTEM' | string;
+  type:
+    | "LIKE_POST"
+    | "COMMENT_POST"
+    | "REPLY_COMMENT"
+    | "FOLLOW_USER"
+    | "SYSTEM"
+    | string;
   actor: {
     id: string;
     username: string;
@@ -101,7 +176,12 @@ export interface Notification {
   contentPreview?: string;
   isRead: boolean;
   createdAt: string;
+  interactionCount?: number;
+  updatedAt?: string;
 }
+
+export interface NotificationSlice { items: Notification[]; nextCursor: string | null; hasNext: boolean }
+export interface NotificationSummary { unread: Record<string, number>; unreadCount: number; revision: string }
 
 export interface AdminUser {
   id: string;
@@ -136,6 +216,14 @@ export interface ScrollResult<T> {
   minScore?: number;
   offset: number;
   hasMore: boolean;
+}
+
+export interface RankedPostSlice {
+  items: Post[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  generatedAt: number;
+  expiresAt: number;
 }
 
 export interface CheckInResponse {

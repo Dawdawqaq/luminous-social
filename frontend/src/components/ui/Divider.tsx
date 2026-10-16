@@ -1,5 +1,5 @@
-import React from 'react';
-import { cn } from '../../utils';
+import React from "react";
+import { cn } from "../../utils";
 
 export interface DividerProps {
   className?: string;
@@ -9,7 +9,7 @@ export interface DividerProps {
 export const Divider: React.FC<DividerProps> = ({ className, label }) => {
   if (label) {
     return (
-      <div className={cn('relative flex py-4 items-center', className)}>
+      <div className={cn("relative flex py-4 items-center", className)}>
         <div className="flex-grow hairline-t" />
         <span className="flex-shrink mx-3 text-[11px] font-sans uppercase tracking-widest text-ink-subtle dark:text-night-subtle">
           {label}
@@ -18,5 +18,5 @@ export const Divider: React.FC<DividerProps> = ({ className, label }) => {
       </div>
     );
   }
-  return <div className={cn('w-full hairline-t my-4', className)} />;
+  return <div className={cn("w-full hairline-t my-4", className)} />;
 };

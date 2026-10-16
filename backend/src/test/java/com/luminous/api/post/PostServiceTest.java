@@ -98,6 +98,7 @@ class PostServiceTest {
     @Mock private com.luminous.api.growth.GrowthQueryService growthQueries;
     @Mock private com.luminous.api.upload.UploadService uploadService;
     @Mock private CommentPublicationPolicy commentPublicationPolicy;
+    @Mock private PostPublicationPolicy postPublicationPolicy;
 
     @InjectMocks
     private PostService postService;
@@ -569,5 +570,23 @@ class PostServiceTest {
     private void assertHidden(Runnable action) {
         assertThatThrownBy(action::run).isInstanceOf(BusinessException.class)
                 .satisfies(ex -> assertThat(((BusinessException) ex).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test void createRequiresMembershipBeforeConsumingQuota() {
+        when(communityService.requireBySlug("tech")).thenReturn(sampleCommunity);
+        doThrow(new BusinessException(HttpStatus.FORBIDDEN, "COMMUNITY_JOIN_REQUIRED", "请先加入社区"))
+                .when(communityService).requireMembership(10L, 1L);
+        assertThatThrownBy(() -> postService.create(new PostDtos.CreatePostRequest("tech", "[E2E_TEST]", "内容", null, null, true), currentUser)).isInstanceOf(BusinessException.class);
+        verifyNoInteractions(postPublicationPolicy);
+        verify(postMapper, never()).insert(any(Post.class));
+    }
+
+    @Test void createValidatesOwnedImageBeforeQuota() {
+        when(communityService.requireBySlug("tech")).thenReturn(sampleCommunity);
+        when(uploadService.requireOwnedPostImage("/other.png", currentUser))
+                .thenThrow(new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_POST_IMAGE", "请重新上传"));
+        assertThatThrownBy(() -> postService.create(new PostDtos.CreatePostRequest("tech", "[E2E_TEST]", "", "/other.png", null, true), currentUser)).isInstanceOf(BusinessException.class);
+        verifyNoInteractions(postPublicationPolicy);
+        verify(postMapper, never()).insert(any(Post.class));
     }
 }

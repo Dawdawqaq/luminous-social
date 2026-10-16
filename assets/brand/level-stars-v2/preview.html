@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Luminous · 六阶段星星对照</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 30px; background: #f3f4f6; color: #1a1a1a; font-family: "Microsoft YaHei", sans-serif; }
+    main { max-width: 1200px; margin: auto; }
+    h1 { margin: 0 0 10px; font-size: 28px; font-weight: 900; }
+    .intro { color: #526071; font-size: 14px; margin: 0 0 22px; line-height: 1.6; }
+    .gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    figure { margin: 0; padding: 20px; background: white; border: 2px solid #1a1a1a; border-radius: 6px; }
+    h2 { display: flex; justify-content: space-between; gap: 12px; margin: 0; font-size: 18px; }
+    h2 span { color: #526071; font-size: 13px; font-weight: 400; align-self: center; }
+    .large { width: 100%; height: 170px; object-fit: contain; display: block; margin: 12px 0; }
+    .description { min-height: 38px; margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: #526071; }
+    .samples { display: flex; align-items: center; gap: 18px; border-top: 1px solid #d1d5db; padding-top: 12px; min-height: 53px; }
+    .sample { display: inline-flex; align-items: center; gap: 6px; }
+    .sample img { display: block; width: 28px; height: 28px; object-fit: contain; }
+    .sample.medium img { width: 40px; height: 40px; }
+    .sample span { font-size: 11px; color: #526071; }
+    .badge { display: inline-flex; flex: none; gap: 4px; align-items: center; justify-content: center; min-width: 76px; height: 28px; padding: 0 8px 0 3px; border: 1.5px solid #1a1a1a; border-radius: 5px; background: white; color: #1a1a1a; }
+    .badge img { width: 24px; height: 24px; object-fit: contain; }
+    .badge small { font-size: 9px; font-weight: 700; }
+    .badge strong { font-size: 13px; font-weight: 900; font-variant-numeric: tabular-nums; }
+    .usage { margin-top: 22px; padding: 20px; border: 2px solid #1a1a1a; border-radius: 6px; background: white; }
+    .usage h2 { margin: 0 0 16px; }
+    .usage-row { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+    .username { font-size: 14px; font-weight: 700; margin-right: 8px; }
+    .dark-row { margin-top: 18px; padding: 12px 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 18px; background: #1f2937; border-radius: 5px; color: white; }
+    .dark-row span { font-size: 12px; }
+    .dark-row img { width: 32px; height: 32px; object-fit: contain; }
+    .note { color: #526071; font-size: 13px; line-height: 1.65; margin: 18px 0 0; }
+    @media (max-width: 850px) { body { padding: 20px; } .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } .samples { gap: 10px; flex-wrap: wrap; } }
+    @media (max-width: 550px) { .gallery { grid-template-columns: 1fr; } h1 { font-size: 23px; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Luminous · 让星星自己成长</h1>
+  <p class="intro">六个阶段的第一版对照。四角轮廓、黑色外边和黄蓝配色保持一致，逐步增加图案细节。<br>每张同时展示大图、28px / 40px 小图，以及名字旁边的实际标识。</p>
+  <div class="gallery" id="gallery"></div>
+  <section class="usage"><h2>实际界面大小 · 同一种底框，只比较星星</h2><div class="usage-row" id="usage"><span class="username">星光同学</span></div><div class="dark-row" id="dark"><span>深色背景</span></div></section>
+  <p class="note">本轮仅做设计预览，阶段分组为视觉建议。未替换导航、猫猫手中的星星或实际页面，也未接入成长系统。</p>
+</main>
+<script>
+  const stages = [
+    { key: "01", levels: "1—3级", name: "原型", description: "沿用已确认的星星，简单、清楚。", level: 1 },
+    { key: "02", levels: "4—6级", name: "柔亮", description: "黄色更饱满，增加一笔柔和高光。", level: 4 },
+    { key: "03", levels: "7—9级", name: "细纹", description: "蓝色角内增加少量纹理。", level: 7 },
+    { key: "04", levels: "10—12级", name: "内框", description: "增加一层内轮廓，呈现小徽章质感。", level: 10 },
+    { key: "05", levels: "13—15级", name: "切面", description: "少量大切面，像一颗小宝石。", level: 13 },
+    { key: "06", levels: "16—18级", name: "宝石", description: "更完整的切面，点缀两颗小闪星。", level: 16 }
+  ];
+  function badge(stage) {
+    return '<span class="badge"><img src="star-stage-' + stage.key + '.png" alt=""><small>LV</small><strong>' + stage.level + '</strong></span>';
+  }
+  document.getElementById("gallery").innerHTML = stages.map(stage => {
+    const file = 'star-stage-' + stage.key + '.png';
+    return '<figure><h2>' + stage.levels + '<span>' + stage.name + '</span></h2><img class="large" src="' + file + '" alt="' + stage.name + '阶段星星"><p class="description">' + stage.description + '</p><div class="samples"><span class="sample"><img src="' + file + '" alt=""><span>28px</span></span><span class="sample medium"><img src="' + file + '" alt=""><span>40px</span></span>' + badge(stage) + '</div></figure>';
+  }).join("");
+  document.getElementById("usage").innerHTML += stages.map(badge).join("");
+  document.getElementById("dark").innerHTML += stages.map(stage => '<img src="star-stage-' + stage.key + '.png" alt="' + stage.name + '">').join("");
+</script>
+</body>
+</html>

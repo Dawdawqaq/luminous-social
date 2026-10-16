@@ -17,6 +17,31 @@ public class Notification {
     private String contentPreview;
     private Boolean isRead;
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private LocalDateTime readAt;
+    private LocalDateTime deletedAt;
+    private Long interactionCount;
+    private Long readVersion;
+    private String aggregateKey;
+    private Long postId;
+    private Long commentId;
+
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime value) { updatedAt=value; }
+    public LocalDateTime getReadAt() { return readAt; }
+    public void setReadAt(LocalDateTime value) { readAt=value; }
+    public LocalDateTime getDeletedAt() { return deletedAt; }
+    public void setDeletedAt(LocalDateTime value) { deletedAt=value; }
+    public Long getInteractionCount() { return interactionCount; }
+    public void setInteractionCount(Long value) { interactionCount=value; }
+    public Long getReadVersion() { return readVersion; }
+    public void setReadVersion(Long value) { readVersion=value; }
+    public String getAggregateKey() { return aggregateKey; }
+    public void setAggregateKey(String value) { aggregateKey=value; }
+    public Long getPostId() { return postId; }
+    public void setPostId(Long value) { postId=value; }
+    public Long getCommentId() { return commentId; }
+    public void setCommentId(Long value) { commentId=value; }
 
     public Long getId() {
         return id;

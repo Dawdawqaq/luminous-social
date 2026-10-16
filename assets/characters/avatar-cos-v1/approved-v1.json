@@ -1,0 +1,73 @@
+{
+  "edition": "v1",
+  "status": "approved",
+  "confirmedAt": "2026-10-14",
+  "avatars": [
+    {
+      "id": "pearl",
+      "label": "珍珠耳环猫",
+      "image": "pearl-cat-star-v2.png",
+      "prompt": "pearl-cat-star-v2.prompt.txt"
+    },
+    {
+      "id": "david",
+      "label": "大卫雕塑猫",
+      "image": "david-cat-v1.png",
+      "prompt": "david-cat-v1.prompt.txt"
+    },
+    {
+      "id": "phantom-thief",
+      "label": "怪盗基德猫",
+      "image": "phantom-thief-cat-v1.png",
+      "prompt": "phantom-thief-cat-v1.prompt.txt"
+    },
+    {
+      "id": "scream-starry",
+      "label": "呐喊 × 星月夜猫",
+      "image": "scream-starry-cat-v1.png",
+      "prompt": "scream-starry-cat-v1.prompt.txt"
+    },
+    {
+      "id": "godfather",
+      "label": "教父猫",
+      "image": "godfather-cat-v1.png",
+      "prompt": "godfather-cat-v1.prompt.txt"
+    },
+    {
+      "id": "pharaoh",
+      "label": "法老猫",
+      "image": "pharaoh-cat-v1.png",
+      "prompt": "pharaoh-cat-v1.prompt.txt"
+    },
+    {
+      "id": "totoro",
+      "label": "龙猫 Cos",
+      "image": "totoro-cat-v1.png",
+      "prompt": "totoro-cat-v1.prompt.txt"
+    },
+    {
+      "id": "little-prince",
+      "label": "小王子猫",
+      "image": "little-prince-cat-v1.png",
+      "prompt": "little-prince-cat-v1.prompt.txt"
+    },
+    {
+      "id": "liberty",
+      "label": "自由女神猫",
+      "image": "liberty-cat-v1.png",
+      "prompt": "liberty-cat-v1.prompt.txt"
+    }
+  ],
+  "excluded": [
+    "naruto-cat-v1.png",
+    "vampire-cat-v1.png",
+    "david-cat-v2.png",
+    "scream-starry-cat-v2.png"
+  ],
+  "referenceOnly": [
+    {
+      "label": "宇航员原型",
+      "image": "../avatar-cats-v1/astronaut.png"
+    }
+  ]
+}

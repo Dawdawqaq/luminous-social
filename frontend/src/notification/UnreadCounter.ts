@@ -1,6 +1,6 @@
 /** 合并刷新请求；已读操作后的刷新排队执行，旧用户或旧轮询结果不能覆盖新状态。 */
 export class UnreadCounter {
-  private identity = '';
+  private identity = "";
   private generation = 0;
   private count = 0;
   private pending?: Promise<void>;
@@ -13,7 +13,9 @@ export class UnreadCounter {
   getIdentity = () => this.identity;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
-    return () => { this.listeners.delete(listener); };
+    return () => {
+      this.listeners.delete(listener);
+    };
   };
 
   activate(identity: string) {
@@ -42,7 +44,8 @@ export class UnreadCounter {
         }
         if (generation !== this.generation) return;
         // 已读操作触发了更新时，先完成后续查询，不能发布这次旧结果。
-        if (!this.dirty && Number.isSafeInteger(count) && count >= 0) this.publish(count);
+        if (!this.dirty && Number.isSafeInteger(count) && count >= 0)
+          this.publish(count);
       } while (generation === this.generation && this.dirty);
     };
     const pending = perform().finally(() => {
@@ -54,6 +57,6 @@ export class UnreadCounter {
 
   private publish(count: number) {
     this.count = count;
-    this.listeners.forEach(listener => listener());
+    this.listeners.forEach((listener) => listener());
   }
 }

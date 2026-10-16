@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Luminous · 等级标识第一版</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 36px; color: #1a1a1a; background: #f3f4f6; font-family: "Microsoft YaHei", sans-serif; }
+    main { max-width: 1200px; margin: auto; }
+    .title { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+    .title img { width: 46px; height: 46px; object-fit: contain; }
+    h1 { margin: 0; font-size: 30px; font-weight: 900; }
+    .intro { margin: 0 0 26px; color: #526071; font-size: 14px; line-height: 1.75; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    .stage { padding: 22px; background: white; border: 2px solid #1a1a1a; border-radius: 6px; }
+    .stage h2 { margin: 0 0 24px; font-size: 18px; }
+    .stage p { margin: 22px 0 0; font-size: 13px; color: #526071; }
+    .badge-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .level-badge { --fill: #ffffff; --text: #1a1a1a; --inner: transparent; position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; gap: 3px; height: 28px; min-width: 76px; padding: 0 7px 0 3px; background: var(--fill); color: var(--text); border: 1.5px solid #1a1a1a; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--inner); white-space: nowrap; vertical-align: middle; }
+    .level-badge img { display: block; width: 24px; height: 24px; object-fit: contain; flex: none; }
+    .level-badge .lv { font-size: 9px; font-weight: 700; }
+    .level-badge .number { min-width: 15px; text-align: center; font-size: 13px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; }
+    .level-badge.tier-2 { --fill: #fff9c4; }
+    .level-badge.tier-3 { --fill: #eaf1ff; }
+    .level-badge.tier-4 { --fill: #2563eb; --text: white; }
+    .level-badge.tier-5 { --fill: #2563eb; --text: white; --inner: #fde047; }
+    .level-badge.tier-6 { --fill: #1d4ed8; --text: white; --inner: #fde047; box-shadow: inset 0 0 0 2px var(--inner); }
+    .large { height: 42px; min-width: 102px; padding: 0 9px 0 4px; gap: 4px; border-width: 2px; border-radius: 6px; }
+    .large img { width: 34px; height: 34px; }
+    .large .lv { font-size: 12px; }
+    .large .number { min-width: 22px; font-size: 19px; }
+    .usage { margin-top: 26px; padding: 22px; border: 2px solid #1a1a1a; border-radius: 6px; background: white; }
+    .usage h2 { margin: 0 0 18px; font-size: 18px; }
+    .examples { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+    .example-title { margin: 0 0 12px; color: #526071; font-size: 13px; }
+    .user-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 34px; }
+    .avatar { width: 32px; height: 32px; background: #fff9c4; border: 1px solid #1a1a1a; border-radius: 50%; display: inline-grid; place-items: center; font-size: 12px; }
+    .username { font-size: 14px; font-weight: 700; }
+    .comment { margin: 12px 0 0 44px; font-size: 14px; }
+    .growth-pair { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+    .dark-example { margin-top: 18px; padding: 14px 18px; border-radius: 5px; background: #1f2937; color: white; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; font-size: 13px; }
+    .footer { margin: 18px 0 0; color: #526071; font-size: 13px; line-height: 1.8; }
+    @media (max-width: 850px) { body { padding: 20px; } .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .badge-row { justify-content: flex-start; flex-wrap: wrap; } .examples { grid-template-columns: 1fr; } }
+    @media (max-width: 520px) { h1 { font-size: 24px; } .grid { grid-template-columns: 1fr; } .stage { padding: 18px; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="title"><img src="../luminous-star-blue-corner-soft-preview-20261011.png" alt=""><h1>Luminous · 等级标识</h1></div>
+  <p class="intro">第一版设计预览，按前面的 18 级参考方案制作。<br>星星保留黑边、黄色主体与蓝色右角；数字区分每一级，底色和内框每三等级变化一次。</p>
+  <div class="grid" id="tiers"></div>
+  <section class="usage">
+    <h2>实际尺寸 · 放到界面里看</h2>
+    <div class="examples">
+      <div><p class="example-title">名字旁边 · 标识高度 28px</p><div class="user-row"><span class="avatar">星</span><span class="username">星光同学</span><span id="name-badge"></span></div><p class="comment">今天又发现了一件喜欢的事。</p></div>
+      <div><p class="example-title">两套等级 · 同样的标识，分别显示数字</p><div class="user-row"><span class="growth-pair">个人等级 <span id="personal-badge"></span></span><span class="growth-pair">社区等级 <span id="community-badge"></span></span></div></div>
+    </div>
+    <div class="dark-example"><span>深色背景</span><span id="dark-badges"></span></div>
+  </section>
+  <p class="footer">上方等级均为设计示例，不是账号的实际等级。当前成长系统尚未实现，本轮仅制作标识预览，不接入页面或经验结算。</p>
+</main>
+<script>
+  const star = "../luminous-star-blue-corner-soft-preview-20261011.png";
+  const descriptions = ["白底墨线，轻量起步。", "淡黄纸面，增加一点暖色。", "浅蓝纸面，延续品牌配色。", "蓝底白字，形成明确的阶段变化。", "蓝底加细黄内框，保持克制。", "深一档蓝色与加粗黄内线，标记高等级。"];
+  function badge(level, large = false) {
+    const tier = Math.ceil(level / 3);
+    return '<span class="level-badge tier-' + tier + (large ? ' large' : '') + '" aria-label="' + level + '级"><img src="' + star + '" alt=""><span class="lv">LV</span><span class="number">' + level + '</span></span>';
+  }
+  document.getElementById("tiers").innerHTML = descriptions.map((description, index) => {
+    const start = index * 3 + 1;
+    return '<section class="stage"><h2>' + start + '—' + (start + 2) + ' 级</h2><div class="badge-row">' + [start, start + 1, start + 2].map(level => badge(level, true)).join("") + '</div><p>' + description + '</p></section>';
+  }).join("");
+  document.getElementById("name-badge").innerHTML = badge(8);
+  document.getElementById("personal-badge").innerHTML = badge(12);
+  document.getElementById("community-badge").innerHTML = badge(5);
+  document.getElementById("dark-badges").innerHTML = [2, 8, 12, 18].map(level => badge(level)).join(" ");
+</script>
+</body>
+</html>

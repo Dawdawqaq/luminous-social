@@ -23,6 +23,16 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
+    @Test void botCannotLoginEvenWithMatchingPasswordAndCannotBeFollowed() {
+        sampleUser.setAccountType("BOT");when(userMapper.selectOne(any())).thenReturn(sampleUser);
+        assertThatThrownBy(()->authService.login(new AuthDtos.LoginRequest("Lumi","[E2E_TEST]"))).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(()->authService.follow("Lumi",new CurrentUser(42L,"[E2E_TEST]"))).isInstanceOf(BusinessException.class);
+        verifyNoInteractions(jwtService,passwordEncoder,followPolicy,eventPublisher);
+    }
+    @Test void reservedBotUsernameCannotBeRegistered() {
+        assertThatThrownBy(()->authService.register(new AuthDtos.RegisterRequest("lUMi","[E2E_TEST]","Password123!"))).isInstanceOf(BusinessException.class);
+        verifyNoInteractions(userMapper,jwtService);
+    }
 
     @Mock
     private UserMapper userMapper;
@@ -157,6 +167,8 @@ class AuthServiceTest {
         assertThat(response.token()).isEqualTo("admin_token");
         assertThat(response.user().username()).isEqualTo("admin_user");
         assertThat(response.user().role()).isEqualTo("USER");
+        assertThat(ProfilePresetCatalog.catalog().avatars()).extracting(ProfilePresetCatalog.Preset::url).contains(response.user().avatar());
+        assertThat(ProfilePresetCatalog.catalog().banners()).extracting(ProfilePresetCatalog.Preset::url).contains(response.user().banner());
         verify(userMapper).insert(any(User.class));
     }
 
@@ -187,6 +199,29 @@ class AuthServiceTest {
                     BusinessException be = (BusinessException) ex;
                     assertThat(be.getStatus()).isEqualTo(HttpStatus.CONFLICT);
                 });
+    }
+
+    @Test
+    void register_PersistsChosenAvatar() {
+        when(userMapper.selectOne(any())).thenReturn(null);
+        when(passwordEncoder.encode("secret")).thenReturn("encoded_secret");
+        var response = authService.register(new AuthDtos.RegisterRequest("chosen_cat", "[E2E_TEST] 选头像", "secret", "pharaoh"));
+        assertThat(response.user().avatar()).isEqualTo("/profile-presets/avatars/pharaoh.webp");
+        var inserted = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(userMapper).insert(inserted.capture());
+        assertThat(inserted.getValue().getAvatarUrl()).isEqualTo(response.user().avatar());
+    }
+
+    @Test
+    void register_RejectsUnlistedAvatarBeforeInsertingUser() {
+        when(userMapper.selectOne(any())).thenReturn(null);
+        when(passwordEncoder.encode("secret")).thenReturn("encoded_secret");
+        assertThatThrownBy(() -> authService.register(new AuthDtos.RegisterRequest("bad_cat", "[E2E_TEST] 非法头像", "secret", "/uploads/custom.png")))
+                .isInstanceOfSatisfying(BusinessException.class, error -> {
+                    assertThat(error.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(error.getCode()).isEqualTo("INVALID_AVATAR_PRESET");
+                });
+        verify(userMapper, never()).insert(any(User.class));
     }
 
     @Test

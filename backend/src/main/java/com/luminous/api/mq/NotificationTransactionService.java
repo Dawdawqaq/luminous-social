@@ -21,11 +21,28 @@ public class NotificationTransactionService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void process(String eventId, NotificationEvent event) {
+        processBatch(java.util.List.of(new Delivery(eventId,event)));
+    }
+
+    public record Delivery(String eventId,NotificationEvent event) {}
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void processBatch(java.util.List<Delivery> deliveries) {
+        if(deliveries==null || deliveries.isEmpty() || deliveries.size()>64) throw new IllegalArgumentException("通知批次应为一至六十四条");
+        java.util.List<NotificationEvent> accepted=new java.util.ArrayList<>();
+        // 消费记录按事件编号加锁，批次间保持相同顺序；不再锁定接收者用户行。
+        for(Delivery delivery : deliveries.stream().sorted(java.util.Comparator.comparing(Delivery::eventId)).toList()) {
+            if(accept(delivery.eventId(),delivery.event())) accepted.add(delivery.event());
+        }
+        notifications.handleEvents(accepted);
+        for(Delivery delivery : deliveries) events.consumed(delivery.eventId());
+    }
+
+    private boolean accept(String eventId,NotificationEvent event) {
         if (eventId == null || eventId.isBlank() || event == null || event.actorId() == null || event.receiverId() == null) {
             throw new IllegalArgumentException("通知事件缺少身份或接收者");
         }
-        // 在首次一致性读取之前锁定接收者，防抖和重复消费均以数据库提交为准。
-        if (jdbc.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class, event.receiverId()).isEmpty()) {
+        if (jdbc.queryForList("SELECT id FROM users WHERE id=?", Long.class, event.receiverId()).isEmpty()) {
             throw new IllegalArgumentException("通知接收者不存在");
         }
         try {
@@ -38,8 +55,6 @@ public class NotificationTransactionService {
                 throw new IllegalArgumentException("通知消息与持久化事件不一致");
             }
         } catch (java.io.IOException ex) { throw new IllegalStateException("通知事件序列化失败", ex); }
-        if (!events.recordConsumption("NOTIFICATION", eventId)) { events.consumed(eventId); return; }
-        notifications.handleEvent(event);
-        events.consumed(eventId);
+        return events.recordConsumption("NOTIFICATION", eventId);
     }
 }

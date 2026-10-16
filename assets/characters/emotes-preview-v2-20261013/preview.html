@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Luminous 猫猫表情第二版</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #1a1a1a; background: #f3f4f6; font-family: "Microsoft YaHei", sans-serif; }
+    main { max-width: 1120px; margin: 0 auto; padding: 40px 48px; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 32px; }
+    h1 { margin: 0 0 10px; font-size: 32px; letter-spacing: -.02em; }
+    header p { margin: 0; color: #526071; font-size: 15px; }
+    .brand { font-size: 23px; font-weight: 800; font-style: italic; color: #2563eb; }
+    .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    figure { margin: 0; text-align: center; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; padding: 18px 14px; }
+    .art { width: 192px; height: 192px; display: block; object-fit: contain; margin: 0 auto 12px; }
+    figcaption { font-size: 18px; font-weight: 700; }
+    .small { display: flex; justify-content: center; align-items: end; gap: 24px; margin: 16px 0 0; }
+    .small span { display: grid; justify-items: center; gap: 5px; color: #526071; font-size: 11px; }
+    .small img { display: block; object-fit: contain; }
+    .examples { margin-top: 28px; padding: 22px 26px; background: #fff; border: 2px solid #1a1a1a; border-radius: 6px; }
+    h2 { margin: 0 0 12px; font-size: 20px; }
+    .row { display: flex; align-items: baseline; gap: 18px; }
+    .row + .row { border-top: 1px solid #e5e7eb; }
+    .context { width: 130px; flex-shrink: 0; color: #526071; font-size: 13px; }
+    .message { font-size: 16px; line-height: 2; margin: 6px 0; }
+    .message img { display: inline-block; width: var(--size); height: var(--size); vertical-align: middle; object-fit: contain; margin: 0 2px; }
+    footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-top: 18px; color: #526071; font-size: 13px; }
+    button { font: inherit; cursor: pointer; padding: 7px 12px; border: 1px solid #1a1a1a; border-radius: 5px; background: #fde047; color: #1a1a1a; }
+    button:focus-visible { outline: 3px solid #2563eb; outline-offset: 3px; }
+    body.dark { background: #141820; color: #f8fafc; }
+    .dark figure, .dark .examples { background: #1f2633; border-color: #778296; }
+    .dark header p, .dark .context, .dark .small span, .dark footer { color: #b9c3d2; }
+    .dark .row + .row { border-color: #3d4657; }
+    @media (max-width: 700px) { main { padding: 24px 16px; } header { align-items: start; } .brand { display: none; } h1 { font-size: 25px; } .gallery { grid-template-columns: repeat(2, 1fr); gap: 12px; } .art { width: 120px; height: 120px; } .small { gap: 8px; } .examples { padding: 16px; } .row { display: block; } .context { display: block; width: auto; margin-top: 12px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>Luminous 猫猫表情 · 第二版</h1><p>大笑去掉小手 · 喜欢抱四角星 · 委屈回归原型</p></div>
+      <span class="brand">Luminous</span>
+    </header>
+    <section class="gallery" aria-label="六款表情素材">
+      <figure><img class="art" src="happy.png" alt="开心的猫猫"><figcaption>开心</figcaption><div class="small"><span><img src="happy.png" width="32" height="32" alt="">32px</span><span><img src="happy.png" width="40" height="40" alt="">40px</span><span><img src="happy.png" width="48" height="48" alt="">48px</span></div></figure>
+      <figure><img class="art" src="like.png" alt="点赞的猫猫"><figcaption>点赞</figcaption><div class="small"><span><img src="like.png" width="32" height="32" alt="">32px</span><span><img src="like.png" width="40" height="40" alt="">40px</span><span><img src="like.png" width="48" height="48" alt="">48px</span></div></figure>
+      <figure><img class="art" src="laugh.png" alt="大笑的猫猫"><figcaption>大笑</figcaption><div class="small"><span><img src="laugh.png" width="32" height="32" alt="">32px</span><span><img src="laugh.png" width="40" height="40" alt="">40px</span><span><img src="laugh.png" width="48" height="48" alt="">48px</span></div></figure>
+      <figure><img class="art" src="confused.png" alt="疑惑的猫猫"><figcaption>疑惑</figcaption><div class="small"><span><img src="confused.png" width="32" height="32" alt="">32px</span><span><img src="confused.png" width="40" height="40" alt="">40px</span><span><img src="confused.png" width="48" height="48" alt="">48px</span></div></figure>
+      <figure><img class="art" src="sad.png" alt="委屈的猫猫"><figcaption>委屈</figcaption><div class="small"><span><img src="sad.png" width="32" height="32" alt="">32px</span><span><img src="sad.png" width="40" height="40" alt="">40px</span><span><img src="sad.png" width="48" height="48" alt="">48px</span></div></figure>
+      <figure><img class="art" src="love.png" alt="表达喜欢的猫猫"><figcaption>喜欢</figcaption><div class="small"><span><img src="love.png" width="32" height="32" alt="">32px</span><span><img src="love.png" width="40" height="40" alt="">40px</span><span><img src="love.png" width="48" height="48" alt="">48px</span></div></figure>
+    </section>
+    <section class="examples" aria-label="实际文字尺寸预览">
+      <h2>放进文字里，看看大小</h2>
+      <div class="row"><span class="context">帖子正文 · 48px</span><p class="message" style="--size:48px">今天又发现了一个宝藏社区 <img src="happy.png" alt="开心"> 大家聊得好开心！</p></div>
+      <div class="row"><span class="context">普通评论 · 48px</span><p class="message" style="--size:48px">这个分享很有用 <img src="like.png" alt="点赞"> 收藏了，谢谢你。</p></div>
+      <div class="row"><span class="context">楼中楼 · 40px</span><p class="message" style="--size:40px">回复 <span style="color:#2563eb">@同好</span>：我也很喜欢 <img src="love.png" alt="喜欢"> 下次一起聊！</p></div>
+    </section>
+    <footer><span>这是独立设计预览，尚未接入网站。尺寸可在挑选后调整。</span><button type="button" aria-pressed="false" onclick="document.body.classList.toggle('dark');this.setAttribute('aria-pressed',document.body.classList.contains('dark'));this.textContent=document.body.classList.contains('dark')?'切换浅色背景':'切换深色背景'">切换深色背景</button></footer>
+  </main>
+</body>
+</html>

@@ -116,6 +116,7 @@ abstract class AbstractVoteIntegrationTest {
             communityMapper.deleteById(communityId);
         }
         for (Long userId : userIds) {
+            jdbcTemplate.update("DELETE FROM notification_like_receipts WHERE receiver_id=? OR actor_id=?", userId, userId);
             jdbcTemplate.update("DELETE FROM notifications WHERE receiver_id=? OR actor_id=?", userId, userId);
             cleanEvents("user_id", userId);
             userMapper.deleteById(userId);

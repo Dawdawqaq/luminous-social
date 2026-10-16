@@ -1,0 +1,53 @@
+{
+  "assets": [
+    {
+      "name": "happy.png",
+      "width": 1254,
+      "height": 1254,
+      "transparentPixels": 754016,
+      "visiblePixels": 818500,
+      "headWidthFraction": 0.8452950558213717
+    },
+    {
+      "name": "like.png",
+      "width": 1254,
+      "height": 1254,
+      "transparentPixels": 723471,
+      "visiblePixels": 849045,
+      "headWidthFraction": 0.8588516746411483
+    },
+    {
+      "name": "laugh.png",
+      "width": 1254,
+      "height": 1254,
+      "transparentPixels": 722731,
+      "visiblePixels": 849785,
+      "headWidthFraction": 0.8660287081339713
+    },
+    {
+      "name": "confused.png",
+      "width": 1254,
+      "height": 1254,
+      "transparentPixels": 730344,
+      "visiblePixels": 842172,
+      "headWidthFraction": 0.8157894736842105
+    },
+    {
+      "name": "sad.png",
+      "width": 1254,
+      "height": 1254,
+      "transparentPixels": 764953,
+      "visiblePixels": 807563,
+      "headWidthFraction": 0.8508771929824561
+    },
+    {
+      "name": "love.png",
+      "width": 1254,
+      "height": 1254,
+      "transparentPixels": 781385,
+      "visiblePixels": 791131,
+      "headWidthFraction": 0.8325358851674641
+    }
+  ],
+  "mobileWidth": 390
+}

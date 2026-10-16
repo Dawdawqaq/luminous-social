@@ -23,6 +23,21 @@ public class NotificationMQConsumer implements MessageListenerConcurrently {
     @Override
     public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> messages, ConsumeConcurrentlyContext context) {
         if (messages == null) { return ConsumeConcurrentlyStatus.CONSUME_SUCCESS; }
+        if(messages.isEmpty()) return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+        try {
+            List<NotificationTransactionService.Delivery> deliveries=new java.util.ArrayList<>();
+            for(MessageExt message : messages) {
+                NotificationEvent event=mapper.readValue(message.getBody(),NotificationEvent.class);
+                String id=event.eventId()==null||event.eventId().isBlank()?message.getKeys():event.eventId();
+                if(id==null||id.isBlank()) id=message.getMsgId();
+                deliveries.add(new NotificationTransactionService.Delivery(id,event));
+            }
+            transactions.processBatch(deliveries);
+            return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+        } catch(Exception batchFailure) {
+            // 批次事务已回滚，退回逐条入口定位坏消息；成功记录仍然去重。
+            log.warn("通知批量消费失败，转为逐条处理",batchFailure);
+        }
         for (MessageExt message : messages) {
             String eventId = message.getKeys() == null || message.getKeys().isBlank() ? message.getMsgId() : message.getKeys();
             String payload = new String(message.getBody(), StandardCharsets.UTF_8);

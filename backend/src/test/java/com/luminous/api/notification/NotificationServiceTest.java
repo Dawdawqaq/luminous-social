@@ -45,6 +45,9 @@ class NotificationServiceTest {
     @Mock
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
+    @Mock
+    private NotificationInboxRepository inbox;
+
     @InjectMocks
     private NotificationService notificationService;
 
@@ -67,29 +70,10 @@ class NotificationServiceTest {
     }
 
     @Test
-    void handleEvent_LikeDebounce_IgnoredWhenDuplicate() {
-        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
-
-        NotificationEvent duplicateLike = new NotificationEvent(
-                1002L, 1001L, "LIKE_POST", "POST", 2001L, "Post Title"
-        );
-
-        notificationService.handleEvent(duplicateLike);
-
-        verify(notificationMapper, never()).insert(any(Notification.class));
-    }
-
-    @Test
-    void handleEvent_Success_WhenNewEvent() {
-        when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(0L);
-
-        NotificationEvent newLike = new NotificationEvent(
-                1002L, 1001L, "LIKE_POST", "POST", 2001L, "Post Title"
-        );
-
-        notificationService.handleEvent(newLike);
-
-        verify(notificationMapper).insert(any(Notification.class));
+    void handleEventDelegatesToTransactionalAggregation() {
+        NotificationEvent event=new NotificationEvent(1002L,1001L,"LIKE_POST","POST",2001L,"[E2E_TEST]");
+        notificationService.handleEvent(event);
+        verify(inbox).insertBatch(List.of(event));
     }
 
     @Test
@@ -139,6 +123,8 @@ class NotificationServiceTest {
         assertThat(dto.actor().displayName()).isEqualTo("Actor Display");
         assertThat(dto.target().targetUrl()).isEqualTo("/post/2001");
         assertThat(dto.isRead()).isFalse();
+        assertThat(java.time.OffsetDateTime.parse(dto.createdAt()).toInstant())
+                .isEqualTo(n1.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant());
     }
 
     @Test
@@ -172,7 +158,7 @@ class NotificationServiceTest {
 
         assertThat(result.items()).hasSize(1);
         NotificationDtos.NotificationDto dto = result.items().get(0);
-        assertThat(dto.target().targetUrl()).isEqualTo("/user/actor_user");
+        assertThat(dto.target().targetUrl()).isEqualTo("/u/actor_user");
         assertThat(dto.target().title()).isEqualTo("Actor Display");
     }
 
@@ -187,8 +173,7 @@ class NotificationServiceTest {
 
         notificationService.markAsRead(5001L, currentUser);
 
-        assertThat(n.getIsRead()).isTrue();
-        verify(notificationMapper).updateById(n);
+        verify(inbox).read(5001L,1001L,null);
     }
 
     @Test
@@ -209,7 +194,7 @@ class NotificationServiceTest {
 
     @Test
     void markAllAsRead_Success() {
-        when(notificationMapper.markAllAsRead(1001L)).thenReturn(3);
+        when(inbox.readAll(1001L)).thenReturn(3);
 
         NotificationDtos.MarkedCountResponse response = notificationService.markAllAsRead(currentUser);
 
@@ -226,6 +211,6 @@ class NotificationServiceTest {
 
         notificationService.deleteNotification(5001L, currentUser);
 
-        verify(notificationMapper).deleteById(5001L);
+        verify(inbox).delete(5001L,1001L);
     }
 }

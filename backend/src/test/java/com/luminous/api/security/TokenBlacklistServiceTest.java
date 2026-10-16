@@ -10,6 +10,11 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class TokenBlacklistServiceTest {
+    @Test void botIdentityIsRejectedByTokenAuthenticationEvenWhenNotBanned() {
+        var users=mock(UserMapper.class);var bot=new User();bot.setAccountType("BOT");bot.setIsBanned(false);
+        when(users.selectById(1L)).thenReturn(bot);
+        assertThat(new TokenBlacklistService(mock(StringRedisTemplate.class),users,60).isUserBanned(1L)).isTrue();
+    }
     @Test void configuredTokenLifetimeControlsHintCache() {
         StringRedisTemplate redis = mock(StringRedisTemplate.class); ValueOperations<String,String> values = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(values);

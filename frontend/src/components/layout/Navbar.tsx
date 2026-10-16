@@ -1,201 +1,161 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Plus, Sun, Moon, Bell, LogIn, LogOut, User, Bookmark, Shield } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
-import { useTheme } from '../../context/ThemeContext';
-import { Avatar } from '../ui/Avatar';
-import { useNotifications } from '../../context/NotificationContext';
-import { HeaderSearch } from '../search/HeaderSearch';
-
+import React, { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  Bell,
+  Moon,
+  Sun,
+  Pencil,
+  ChevronDown,
+  UserRound,
+  LogOut,
+  Shield,
+  Bookmark,
+} from "lucide-react";
+import { HeaderSearch } from "../search/HeaderSearch";
+import { Avatar } from "../ui/Avatar";
+import { useAuth } from "../../context/AuthContext";
+import { useTheme } from "../../context/ThemeContext";
+import { useNotifications } from "../../context/NotificationContext";
 interface NavbarProps {
-  onOpenSearch?: () => void;
-  onOpenAuth: (mode?: 'login' | 'register') => void;
+  onOpenAuth: (mode?: "login" | "register") => void;
   onOpenCreatePost: () => void;
   onOpenNotifications: () => void;
 }
-
 export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuth,
   onOpenCreatePost,
   onOpenNotifications,
 }) => {
-  const { user, isAuthenticated, logout, isAdmin } = useAuth();
+  const { user, isAuthenticated, isAdmin, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const location = useLocation();
+  const { unreadCount } = useNotifications();
   const navigate = useNavigate();
-  const { unreadCount, refresh: refreshNotifications } = useNotifications();
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-
-  useEffect(() => { if (isAuthenticated) void refreshNotifications(); }, [isAuthenticated, location.pathname, refreshNotifications]);
-
-  const navLinks = [
-    { label: '全部帖子', path: '/', exact: true },
-    { label: '社区列表', path: '/salons' },
-    { label: '我的收藏', path: '/archive', requiresAuth: true },
-  ];
-
+  const [menu, setMenu] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setMenu(false);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", key);
+    };
+  }, [menu]);
   return (
-    <header className="sticky top-0 z-40 bg-paper-100/95 dark:bg-night-canvas/95 backdrop-blur-md hairline-b transition-colors">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-        
-        {/* Left: Brand & Main Forum Nav */}
-        <div className="flex items-center gap-6 sm:gap-8">
-          <Link to="/" className="flex items-center gap-1.5 group">
-            <span className="font-serif text-2xl font-bold tracking-tight text-ink-primary dark:text-night-ink group-hover:opacity-85 transition-opacity">
-              LUMINOUS
-            </span>
-            <span className="w-1.5 h-1.5 rounded-full bg-terracotta -mt-1 group-hover:scale-125 transition-transform" />
-          </Link>
-
-          <nav className="flex items-center gap-4 sm:gap-6">
-            {navLinks.map((link) => {
-              if (link.requiresAuth && !isAuthenticated) return null;
-              const isActive = link.exact
-                ? location.pathname === link.path
-                : location.pathname.startsWith(link.path);
-
-              return (
-                <Link
-                  key={link.path}
-                  to={link.path}
-                  className={`text-xs sm:text-sm font-sans tracking-wide transition-colors py-1 ${
-                    isActive
-                      ? 'text-ink-primary dark:text-night-ink font-semibold border-b-2 border-terracotta'
-                      : 'text-ink-muted hover:text-ink-primary dark:text-night-muted dark:hover:text-night-ink'
-                  }`}
-                >
-                  {link.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* Right: Search, Publish, Theme, User Profile */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          
-          {/* Seamless Inline Header Search */}
+    <header className="site-header">
+      <div className="header-inner">
+        <Link to="/" className="brand" aria-label="Luminous 首页">
+          <img
+            className="brand-mark"
+            src="/brand/luminous-star-soft.png"
+            alt=""
+            aria-hidden="true"
+            width="37"
+            height="37"
+          />
+          <div>
+            <span className="brand-word">Luminous</span>
+            <span className="brand-tagline">让热爱发光</span>
+          </div>
+        </Link>
+        <div className="header-search">
           <HeaderSearch />
-
-          {/* Theme Toggle */}
+        </div>
+        <div className="header-actions">
           <button
+            className="icon-button"
+            aria-label={theme === "dark" ? "切换浅色模式" : "切换深色模式"}
             onClick={toggleTheme}
-            className="p-1.5 text-ink-muted hover:text-ink-primary dark:text-night-muted dark:hover:text-night-ink transition-colors cursor-pointer"
-            title={theme === 'dark' ? '切换为浅色日光纸张' : '切换为深色夜室模式'}
           >
-            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {theme === "dark" ? <Sun size={21} /> : <Moon size={21} />}
           </button>
-
-          {/* Notification Button */}
           {isAuthenticated && (
             <button
+              className="icon-button relative"
+              aria-label={
+                "通知" + (unreadCount ? "，" + unreadCount + "条未读" : "")
+              }
               onClick={onOpenNotifications}
-              className="relative p-1.5 text-ink-muted hover:text-ink-primary dark:text-night-muted dark:hover:text-night-ink transition-colors cursor-pointer"
-              title="消息通知"
             >
-              <Bell className="w-4 h-4" />
+              <Bell size={23} />
               {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-terracotta" />
+                <span className="absolute top-0 right-0 rounded-full bg-terracotta text-white px-1 text-[10px]">
+                  {unreadCount > 99 ? "99+" : unreadCount}
+                </span>
               )}
             </button>
           )}
-
-          {/* Primary Action: New Post Button */}
-          <button
-            onClick={() => {
-              if (!isAuthenticated) {
-                onOpenAuth('login');
-              } else {
-                onOpenCreatePost();
-              }
-            }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-sans font-medium bg-ink-primary text-paper-50 dark:bg-night-ink dark:text-night-canvas hover:bg-ink-dark dark:hover:bg-white rounded-[2px] transition-colors cursor-pointer shadow-tactile"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>发帖</span>
-          </button>
-
-          {/* User Menu / Login Button */}
           {isAuthenticated && user ? (
-            <div className="relative">
+            <div className="relative" ref={ref}>
               <button
-                onClick={() => setIsMenuOpen(!isMenuOpen)}
-                className="flex items-center gap-2 p-0.5 rounded hover:bg-paper-200/50 dark:hover:bg-night-surface transition-colors cursor-pointer"
+                className="flex items-center gap-2 px-1 py-1"
+                aria-label="打开用户菜单"
+                aria-expanded={menu}
+                onClick={() => setMenu(!menu)}
               >
-                <Avatar src={user.avatar} name={user.displayName || user.username} size="sm" />
+                <Avatar
+                  src={user.avatar}
+                  name={user.displayName || user.username}
+                  size="md"
+                />
+                <span className="user-name max-w-20 truncate font-bold text-sm">
+                  {user.displayName || user.username}
+                </span>
+                <ChevronDown size={15} />
               </button>
-
-              {isMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setIsMenuOpen(false)} />
-                  <div className="absolute right-0 mt-2 w-52 bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] shadow-lifted z-50 py-1 animate-in fade-in zoom-in-95">
-                    <div className="px-4 py-2.5 hairline-b">
-                      <p className="font-serif font-medium text-sm text-ink-primary dark:text-night-ink truncate">
-                        {user.displayName || user.username}
-                      </p>
-                      <p className="font-sans text-[11px] text-ink-subtle dark:text-night-subtle truncate">
-                        @{user.username}
-                      </p>
-                    </div>
-
-                    <div className="py-1">
-                      <Link
-                        to={`/u/${user.username}`}
-                        onClick={() => setIsMenuOpen(false)}
-                        className="flex items-center gap-2.5 px-4 py-2 text-xs text-ink-muted hover:text-ink-primary hover:bg-paper-200/50 dark:text-night-muted dark:hover:text-night-ink dark:hover:bg-night-surfaceHover"
-                      >
-                        <User className="w-3.5 h-3.5" />
-                        <span>个人主页</span>
-                      </Link>
-
-                      <Link
-                        to="/archive"
-                        onClick={() => setIsMenuOpen(false)}
-                        className="flex items-center gap-2.5 px-4 py-2 text-xs text-ink-muted hover:text-ink-primary hover:bg-paper-200/50 dark:text-night-muted dark:hover:text-night-ink dark:hover:bg-night-surfaceHover"
-                      >
-                        <Bookmark className="w-3.5 h-3.5" />
-                        <span>我的收藏</span>
-                      </Link>
-
-                      {isAdmin && (
-                        <Link
-                          to="/admin"
-                          onClick={() => setIsMenuOpen(false)}
-                          className="flex items-center gap-2.5 px-4 py-2 text-xs text-terracotta hover:bg-paper-200/50 dark:hover:bg-night-surfaceHover"
-                        >
-                          <Shield className="w-3.5 h-3.5" />
-                          <span>社区管理后台</span>
-                        </Link>
-                      )}
-                    </div>
-
-                    <div className="hairline-t pt-1">
-                      <button
-                        onClick={() => {
-                          setIsMenuOpen(false);
-                          logout();
-                          navigate('/');
-                        }}
-                        className="w-full flex items-center gap-2.5 px-4 py-2 text-xs text-ink-subtle hover:text-terracotta hover:bg-paper-200/50 dark:hover:bg-night-surfaceHover transition-colors cursor-pointer text-left"
-                      >
-                        <LogOut className="w-3.5 h-3.5" />
-                        <span>退出登录</span>
-                      </button>
-                    </div>
-                  </div>
-                </>
+              {menu && (
+                <div className="panel user-menu">
+                  <Link
+                    to={"/u/" + encodeURIComponent(user.username)}
+                    onClick={() => setMenu(false)}
+                  >
+                    <UserRound size={17} />
+                    个人主页
+                  </Link>
+                  <Link to="/archive" onClick={() => setMenu(false)}>
+                    <Bookmark size={17} />
+                    我的收藏
+                  </Link>
+                  {isAdmin && (
+                    <Link to="/admin" onClick={() => setMenu(false)}>
+                      <Shield size={17} />
+                      管理后台
+                    </Link>
+                  )}
+                  <button
+                    onClick={() => {
+                      setMenu(false);
+                      logout();
+                      navigate("/");
+                    }}
+                  >
+                    <LogOut size={17} />
+                    退出登录
+                  </button>
+                </div>
               )}
             </div>
           ) : (
             <button
-              onClick={() => onOpenAuth('login')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-sans font-medium text-ink-primary dark:text-night-ink border border-paper-300 dark:border-night-border hover:bg-paper-200/60 dark:hover:bg-night-surface rounded-[2px] transition-colors cursor-pointer"
+              className="ink-button small"
+              onClick={() => onOpenAuth("login")}
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>登录 / 注册</span>
+              登录
             </button>
           )}
-
+          <button
+            className="ink-button primary header-publish"
+            onClick={onOpenCreatePost}
+          >
+            <Pencil size={19} />
+            发帖
+          </button>
         </div>
       </div>
     </header>

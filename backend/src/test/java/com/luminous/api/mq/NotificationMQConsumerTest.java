@@ -18,7 +18,7 @@ import static org.mockito.Mockito.*;
 class NotificationMQConsumerTest {
     @Mock private NotificationTransactionService transactions;
     @Mock private FailedMessageService failures;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private NotificationMQConsumer consumer;
     @BeforeEach void setUp() { consumer = new NotificationMQConsumer(transactions, failures, mapper); }
     private MessageExt message(NotificationEvent event, int retries) throws Exception {
@@ -28,10 +28,11 @@ class NotificationMQConsumerTest {
     @Test void consumesThroughTransactionService() throws Exception {
         NotificationEvent event = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST]");
         assertThat(consumer.consumeMessage(List.of(message(event, 0)), null)).isEqualTo(ConsumeConcurrentlyStatus.CONSUME_SUCCESS);
-        verify(transactions).process(event.eventId(), event);
+        verify(transactions).processBatch(List.of(new NotificationTransactionService.Delivery(event.eventId(),event)));
     }
     @Test void archiveFailureDoesNotAcknowledge() throws Exception {
         NotificationEvent event = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST]");
+        doThrow(new IllegalStateException("[E2E_TEST] 批次失败")).when(transactions).processBatch(anyList());
         doThrow(new IllegalStateException("[E2E_TEST] 业务失败")).when(transactions).process(anyString(), any());
         doThrow(new IllegalStateException("[E2E_TEST] 归档失败")).when(failures).archive(anyString(),anyString(),anyString(),anyInt(),any());
         assertThat(consumer.consumeMessage(List.of(message(event, 3)), null)).isEqualTo(ConsumeConcurrentlyStatus.RECONSUME_LATER);
@@ -39,6 +40,7 @@ class NotificationMQConsumerTest {
     @Test void archivedFailureDoesNotSkipRestOfBatch() throws Exception {
         NotificationEvent first = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST] 失败");
         NotificationEvent second = new NotificationEvent(1L, 2L, "COMMENT_POST", "POST", 100L, "[E2E_TEST] 成功");
+        doThrow(new IllegalStateException("[E2E_TEST] 批次失败")).when(transactions).processBatch(anyList());
         doThrow(new IllegalStateException("[E2E_TEST]")).when(transactions).process(first.eventId(), first);
         assertThat(consumer.consumeMessage(List.of(message(first, 3), message(second, 0)), null)).isEqualTo(ConsumeConcurrentlyStatus.CONSUME_SUCCESS);
         verify(failures).archive(eq("NOTIFICATION"),eq(first.eventId()),anyString(),eq(4),any());

@@ -13,9 +13,16 @@ public class VoteRepository {
     public record State(long postId, long userId, int desiredValue, long acceptedVersion,
                         int appliedValue, long appliedVersion) {}
     public record Clock(long postId, long acceptedVersion, int acceptedTotal) {}
+    public record NotificationTarget(long authorId,String title) {}
     private final JdbcTemplate jdbc;
 
     public VoteRepository(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+
+    public NotificationTarget notificationTarget(long postId) {
+        List<NotificationTarget> rows=jdbc.query("SELECT author_id,title FROM posts WHERE id=?",
+                (rs,row) -> new NotificationTarget(rs.getLong("author_id"),rs.getString("title")),postId);
+        return rows.isEmpty()?null:rows.getFirst();
+    }
 
     public void lockPost(long postId) {
         if (!tryLockPost(postId)) {

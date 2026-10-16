@@ -1,0 +1,56 @@
+.level-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 4px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  line-height: 1;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.level-badge img {
+  display: block;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.level-badge__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+}
+
+.level-badge__prefix {
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.level-badge__number {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.level-badge--md {
+  height: 36px;
+}
+
+.level-badge--md img {
+  width: 32px;
+  height: 32px;
+}
+
+.level-badge--md .level-badge__number {
+  font-size: 15px;
+}
+
+.level-badge--interactive { min-height: 36px; cursor: pointer; border-radius: 4px; }
+.level-badge--interactive:hover { color: var(--blue); }

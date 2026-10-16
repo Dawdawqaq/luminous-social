@@ -44,7 +44,7 @@ public class TokenBlacklistService {
         if (userId == null) { return true; }
         try {
             User user = users.selectById(userId);
-            return user == null || Boolean.TRUE.equals(user.getIsBanned());
+            return user == null || Boolean.TRUE.equals(user.getIsBanned()) || "BOT".equals(user.getAccountType());
         } catch (Exception ex) {
             throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "AUTH_STATE_UNAVAILABLE", "暂时无法确认账号状态，请稍后重试");
         }

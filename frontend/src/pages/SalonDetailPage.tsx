@@ -1,370 +1,301 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { Community, Post, CheckInStats } from '../types';
-import { communityApi, postApi, checkInApi } from '../api/client';
-import { PostCard } from '../components/post/PostCard';
-import { Button } from '../components/ui/Button';
-import { Avatar } from '../components/ui/Avatar';
-import { EditSalonModal } from '../components/community/EditSalonModal';
-import { useAuth } from '../context/AuthContext';
-import { useToast } from '../context/ToastContext';
-import { Users, Plus, Settings, ArrowLeft, Loader2, ShieldAlert, Calendar, Award, CheckCircle2 } from 'lucide-react';
-
-interface SalonDetailPageProps {
+import React, { useEffect, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import {
+  Users,
+  Pencil,
+  Settings,
+  CalendarDays,
+  Check,
+  ShieldCheck,
+} from "lucide-react";
+import { Community, Post, CheckInStats } from "../types";
+import { communityApi, postApi, checkInApi } from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useRemoteData } from "../hooks/useRemoteData";
+import { Avatar } from "../components/ui/Avatar";
+import { Button } from "../components/ui/Button";
+import { ContentState } from "../components/common/ContentState";
+import { PageMascot } from "../components/common/PageMascot";
+import { PostCard } from "../components/post/PostCard";
+import { EditSalonModal } from "../components/community/EditSalonModal";
+import { useCommunityPosts } from "../hooks/useCommunityPosts";
+import { PageBackButton } from "../components/common/PageBackButton";
+interface Props {
   onRequireAuth: () => void;
-  onOpenCreatePost: (defaultCommunity?: string) => void;
+  onOpenCreatePost: (community?: string) => void;
 }
-
-export const SalonDetailPage: React.FC<SalonDetailPageProps> = ({
+export const SalonDetailPage: React.FC<Props> = ({
   onRequireAuth,
   onOpenCreatePost,
 }) => {
-  const { slug } = useParams<{ slug: string }>();
-  const { user, isAuthenticated } = useAuth();
+  const { slug = "" } = useParams();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { showToast } = useToast();
-
-  const [community, setCommunity] = useState<Community | null>(null);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isJoining, setIsJoining] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [checkInStats, setCheckInStats] = useState<CheckInStats | null>(null);
-  const [isCheckingIn, setIsCheckingIn] = useState(false);
-
-  const fetchCheckInStats = useCallback(async (communitySlug: string) => {
-    if (!isAuthenticated) return;
-    try {
-      const stats = await checkInApi.getStats(communitySlug);
-      setCheckInStats(stats);
-    } catch {
-      // Ignored if not joined or error
-    }
-  }, [isAuthenticated]);
-
-  const fetchSalonData = useCallback(async () => {
-    if (!slug) return;
-    try {
-      setIsLoading(true);
-      const [salonRes, postsRes] = await Promise.allSettled([
-        communityApi.getBySlug(slug),
-        postApi.list({ community: slug, size: 20 }),
-      ]);
-
-      if (salonRes.status === 'fulfilled' && salonRes.value) {
-        setCommunity(salonRes.value);
-        if (salonRes.value.joined) {
-          fetchCheckInStats(salonRes.value.name);
-        }
-      }
-      if (postsRes.status === 'fulfilled' && postsRes.value.items) {
-        setPosts(postsRes.value.items);
-      }
-    } catch {
-    } finally {
-      setIsLoading(false);
-    }
-  }, [slug, fetchCheckInStats]);
-
-  const handleCheckIn = async () => {
-    if (!isAuthenticated) {
-      onRequireAuth();
-      return;
-    }
-    if (!community) return;
-    try {
-      setIsCheckingIn(true);
-      const res = await checkInApi.checkIn(community.name);
-      if (res.success) {
-        showToast(`签到成功！已连续签到 ${res.consecutiveDays} 天`, 'success');
-        setCheckInStats({
-          totalDays: res.totalDays,
-          consecutiveDays: res.consecutiveDays,
-          checkedToday: true,
-          checkedDays: checkInStats ? [...checkInStats.checkedDays, new Date().getDate()] : [new Date().getDate()],
-        });
-      } else {
-        showToast(res.message || '今日已完成签到', 'info');
-      }
-    } catch (err: any) {
-      showToast(err.message || '签到失败', 'error');
-    } finally {
-      setIsCheckingIn(false);
-    }
-  };
-
+  const community = useRemoteData<Community | null>(
+    () => communityApi.getBySlug(slug),
+    [slug, user?.id],
+    null,
+    !authLoading,
+  );
   useEffect(() => {
-    fetchSalonData();
-  }, [fetchSalonData]);
-
-  const handleJoinToggle = async () => {
+    let active = true;
+    const refreshMembership = () => {
+      communityApi.getBySlug(slug).then(updated => { if (active) community.setData(updated); }).catch(() => {});
+    };
+    window.addEventListener("luminous:communities-changed", refreshMembership);
+    return () => { active = false; window.removeEventListener("luminous:communities-changed", refreshMembership); };
+  }, [slug, user?.id]);
+  const [order, setOrder] = useState("new");
+  const posts = useCommunityPosts(slug, order, !authLoading, user?.id);
+  const stats = useRemoteData<CheckInStats | null>(
+    () => checkInApi.getStats(slug),
+    [slug, user?.id, community.data?.joined],
+    null,
+    isAuthenticated && !!community.data?.joined,
+  );
+  const [joining, setJoining] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const busy = useRef({ join: false, check: false });
+  const join = async () => {
     if (!isAuthenticated) {
       onRequireAuth();
       return;
     }
-    if (!community || isJoining) return;
-
+    if (!community.data || busy.current.join) return;
+    busy.current.join = true;
+    setJoining(true);
     try {
-      setIsJoining(true);
-      if (community.joined) {
-        await communityApi.leave(community.name);
-        setCommunity({
-          ...community,
-          joined: false,
-          membersCount: Math.max(0, community.membersCount - 1),
-        });
-        showToast(`已退出 c/${community.name} 社区`, 'info');
-      } else {
-        await communityApi.join(community.name);
-        setCommunity({
-          ...community,
-          joined: true,
-          membersCount: community.membersCount + 1,
-        });
-        showToast(`已成功加入 c/${community.name} 社区`, 'success');
-      }
-    } catch (err: any) {
-      showToast(err.message || '操作失败', 'error');
+      const updated = community.data.joined
+        ? await communityApi.leave(slug)
+        : await communityApi.join(slug);
+      community.setData(updated);
+      window.dispatchEvent(new Event("luminous:communities-changed"));
+      showToast(updated.joined ? "已加入社区" : "已退出社区", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "操作失败", "error");
     } finally {
-      setIsJoining(false);
+      busy.current.join = false;
+      setJoining(false);
     }
   };
-
-  if (isLoading) {
+  const checkIn = async () => {
+    if (busy.current.check) return;
+    busy.current.check = true;
+    setChecking(true);
+    try {
+      const result = await checkInApi.checkIn(slug);
+      stats.setData((previous) => ({
+        totalDays: result.totalDays,
+        consecutiveDays: result.consecutiveDays,
+        checkedToday: true,
+        checkedDays: previous?.checkedDays || [],
+      }));
+      showToast(result.message || "签到成功", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "签到失败", "error");
+    } finally {
+      busy.current.check = false;
+      setChecking(false);
+    }
+  };
+  if (community.loading || authLoading)
     return (
-      <div className="py-32 text-center space-y-3">
-        <Loader2 className="w-8 h-8 animate-spin mx-auto text-ink-subtle" />
-        <p className="font-serif italic text-sm text-ink-muted dark:text-night-muted">
-          正在载入社区...
-        </p>
+      <div className="space-y-6">
+        <PageBackButton fallback="/salons" fallbackLabel="返回社区列表" />
+        <div className="panel">
+        <ContentState title="正在加载社区" loading />
+        </div>
       </div>
     );
-  }
-
-  if (!community) {
+  if (community.error || !community.data)
     return (
-      <div className="py-24 text-center space-y-4">
-        <h2 className="font-serif text-2xl font-medium text-ink-primary dark:text-night-ink">
-          社区不存在
-        </h2>
-        <Link to="/salons">
-          <Button variant="outline" size="sm">
-            返回社区列表
-          </Button>
-        </Link>
+      <div className="space-y-6">
+        <PageBackButton fallback="/salons" fallbackLabel="返回社区列表" />
+        <div className="panel">
+        <ContentState
+          title="社区暂时无法打开"
+          description={community.error || "社区不存在或已关闭。"}
+          onRetry={community.reload}
+        />
+        </div>
       </div>
     );
-  }
-
-  const isOwner = user?.id && community.ownerId === user.id;
-
+  const c = community.data;
   return (
-    <div className="space-y-8 animate-in fade-in duration-150">
-      
-      <Link
-        to="/salons"
-        className="inline-flex items-center gap-1.5 text-xs font-sans text-ink-muted hover:text-ink-primary dark:text-night-muted dark:hover:text-night-ink transition-colors"
-      >
-        <ArrowLeft className="w-3.5 h-3.5" />
-        <span>返回全部社区</span>
-      </Link>
-
-      {/* Community Header Showcase */}
-      <div className="relative overflow-hidden bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] shadow-tactile p-6 sm:p-8 space-y-4">
-        <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-4">
-          <div className="flex items-start gap-4">
-            <Avatar
-              src={community.icon}
-              name={community.displayName || community.name}
-              size="lg"
-            />
-            <div className="space-y-1">
-              <h1 className="font-serif text-2xl sm:text-3xl font-medium text-ink-primary dark:text-night-ink tracking-tight">
-                c/{community.name}
+    <div className="space-y-6">
+      <PageBackButton fallback="/salons" fallbackLabel="返回社区列表" />
+      <header className="panel overflow-hidden">
+        {c.banner && <img src={c.banner} alt="社区封面" className="w-full h-32 sm:h-44 object-cover" />}
+        <div className="p-6 sm:p-7">
+        <div className="flex flex-col sm:flex-row gap-5 sm:justify-between sm:items-start">
+          <div className="flex gap-4 min-w-0">
+            <Avatar src={c.icon} name={c.displayName || c.name} size="xl" />
+            <div className="min-w-0">
+              <h1 className="text-2xl sm:text-3xl font-extrabold break-words">
+                {c.displayName || c.name}
               </h1>
-              {community.displayName && (
-                <p className="text-xs font-sans text-ink-muted dark:text-night-muted">
-                  {community.displayName}
-                </p>
-              )}
+              <p className="text-sm text-ink-muted dark:text-night-muted mt-1 flex items-center gap-2">
+                <Users size={16} />
+                {c.membersCount} 位成员
+              </p>
             </div>
           </div>
-
-          <div className="flex items-center gap-3">
-            {isOwner && (
+          <div className="flex gap-3 flex-wrap">
+            <Button
+              variant={c.joined ? "outline" : "primary"}
+              size="sm"
+              isLoading={joining}
+              onClick={join}
+            >
+              {c.joined ? "已加入 · 退出" : "加入社区"}
+            </Button>
+            <Button size="sm" onClick={() => onOpenCreatePost(c.name)}>
+              <Pencil size={16} />
+              发帖
+            </Button>
+            {user?.id === c.ownerId && (
               <Button
-                variant="outline"
                 size="sm"
-                onClick={() => setIsEditModalOpen(true)}
+                variant="ghost"
+                onClick={() => setEditing(true)}
               >
-                <Settings className="w-3.5 h-3.5" />
-                <span>配置社区</span>
+                <Settings size={17} />
+                管理
               </Button>
             )}
-            <Button
-              variant={community.joined ? 'secondary' : 'primary'}
-              size="sm"
-              onClick={handleJoinToggle}
-              isLoading={isJoining}
-            >
-              {community.joined ? '已加入 (Joined)' : '加入社区 (Join)'}
-            </Button>
           </div>
         </div>
-
-        <p className="font-serif italic text-sm sm:text-base text-ink-muted dark:text-night-muted max-w-2xl leading-relaxed">
-          “{community.description || '探索思想与作品的专属社区空间。'}”
+        <p className="mt-5 text-sm sm:text-base text-ink-muted dark:text-night-muted leading-relaxed whitespace-pre-wrap">
+          {c.description}
         </p>
-
-        <div className="flex flex-wrap items-center gap-6 pt-3 hairline-t text-xs font-sans text-ink-subtle dark:text-night-subtle">
-          <span className="flex items-center gap-1.5">
-            <Users className="w-3.5 h-3.5 text-ink-muted" />
-            <strong className="text-ink-primary dark:text-night-ink font-medium">
-              {community.membersCount}
-            </strong>{' '}
-            位成员
-          </span>
-          <span>
-            <strong className="text-ink-primary dark:text-night-ink font-medium">
-              {posts.length}
-            </strong>{' '}
-            篇讨论与手稿
-          </span>
-        </div>
-      </div>
-
-      {/* Main Grid: Left Posts Stream + Right Community Rules */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
-        
-        {/* Posts Stream */}
-        <div className="lg:col-span-8 space-y-4">
-          <div className="flex items-center justify-between pb-3 hairline-b">
-            <h3 className="font-serif text-lg font-medium text-ink-primary dark:text-night-ink">
-              社区帖子 ({posts.length})
-            </h3>
-            <Button
-              size="sm"
-              onClick={() => {
-                if (!isAuthenticated) onRequireAuth();
-                else onOpenCreatePost(community.name);
-              }}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>在此发帖</span>
-            </Button>
+      </div></header>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_280px] gap-6 items-start">
+        <section className="panel overflow-hidden">
+          <div className="px-5 py-4 hairline-b flex flex-wrap gap-3 justify-between items-center">
+            <h2 className="font-extrabold text-lg">社区讨论</h2>
+            <div className="flex flex-wrap gap-2">{[["new", "最新"], ["hot", "近七天热门"]].map(([value, label]) => <Button key={value} variant={order === value ? "primary" : "ghost"} size="sm" aria-pressed={order === value} onClick={() => setOrder(value)}>{label}</Button>)}</div>
           </div>
-
-          {posts.length === 0 ? (
-            <div className="py-20 text-center space-y-3 bg-paper-50/50 dark:bg-night-surface/20 border border-paper-300/60 dark:border-night-border/60 rounded-[2px]">
-              <p className="font-serif italic text-sm text-ink-muted dark:text-night-muted">
-                本社区暂无帖子。成为第一个发帖的人吧。
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-paper-300 dark:divide-night-border">
-              {posts.map((post) => (
+          <div className="px-5">
+            {posts.loading ? (
+              <ContentState title="正在加载讨论" loading />
+            ) : posts.error ? (
+              <ContentState
+                title="帖子加载失败"
+                description={posts.error}
+                onRetry={posts.reload}
+              />
+            ) : posts.data.length ? (
+              posts.data.map((p) => (
                 <PostCard
-                  key={post.id}
-                  post={post}
+                  key={p.id}
+                  post={p}
                   onRequireAuth={onRequireAuth}
-                  onVoteChange={(updated) => {
-                    setPosts((prev) =>
-                      prev.map((p) => (p.id === updated.id ? updated : p))
-                    );
-                  }}
+                  onVoteChange={(updated) =>
+                    posts.setData((previous) =>
+                      previous.map((item) =>
+                        item.id === updated.id ? updated : item,
+                      ),
+                    )
+                  }
                 />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Right Rules & Checkin */}
-        <aside className="lg:col-span-4 space-y-6">
-          {/* 社区签到卡片 (Redis Bitmap) */}
-          <div className="p-5 bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] shadow-tactile space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-sans font-semibold uppercase tracking-wider text-ink-primary dark:text-night-ink">
-                <Calendar className="w-3.5 h-3.5 text-terracotta" />
-                <span>社区每日签到</span>
-              </div>
-              {checkInStats?.checkedToday && (
-                <span className="inline-flex items-center gap-1 text-[11px] font-sans text-forest dark:text-forest-light bg-forest/10 px-2 py-0.5 rounded-[2px]">
-                  <CheckCircle2 className="w-3 h-3" />
-                  已签到
-                </span>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 text-center py-2 bg-paper-200/50 dark:bg-night-surfaceHover rounded-[2px]">
-              <div>
-                <div className="text-xl font-bold font-mono text-terracotta">
-                  {checkInStats?.consecutiveDays || 0}
-                </div>
-                <div className="text-[11px] text-ink-subtle dark:text-night-subtle font-sans mt-0.5">
-                  连续签到天数
-                </div>
-              </div>
-              <div>
-                <div className="text-xl font-bold font-mono text-ink-primary dark:text-night-ink">
-                  {checkInStats?.totalDays || 0}
-                </div>
-                <div className="text-[11px] text-ink-subtle dark:text-night-subtle font-sans mt-0.5">
-                  本月累计天数
-                </div>
-              </div>
-            </div>
-
-            {community.joined ? (
-              <Button
-                variant={checkInStats?.checkedToday ? 'secondary' : 'primary'}
-                className="w-full justify-center text-xs"
-                disabled={checkInStats?.checkedToday || isCheckingIn}
-                onClick={handleCheckIn}
-              >
-                {isCheckingIn ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                ) : (
-                  <Award className="w-3.5 h-3.5 mr-1.5 text-terracotta" />
-                )}
-                <span>{checkInStats?.checkedToday ? '今日已完成签到' : '点击签到打卡'}</span>
-              </Button>
+              ))
             ) : (
-              <p className="text-[11px] text-center text-ink-muted dark:text-night-muted italic font-serif">
-                加入该社区后即可参与每日签到
-              </p>
+              <ContentState
+                title={order === "hot" ? "近七天还没有上榜帖子" : "还没有讨论"}
+                description="分享一个想法，和社区里的朋友聊起来。"
+              >
+                <Button size="sm" onClick={() => onOpenCreatePost(c.name)}>
+                  发布第一篇帖子
+                </Button>
+              </ContentState>
             )}
+            {posts.moreError && <p role="alert" className="text-sm py-3">{posts.moreError}</p>}
+            {posts.expired ? <div className="py-4 text-center"><Button size="sm" onClick={posts.reload}>刷新列表</Button></div> : posts.hasMore && <div className="py-4 text-center"><Button size="sm" variant="outline" isLoading={posts.loadingMore} onClick={posts.loadMore}>{posts.moreError ? "重试加载" : "加载更多帖子"}</Button></div>}
           </div>
-
-          {community.rules && community.rules.length > 0 && (
-            <div className="p-5 bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] shadow-tactile space-y-3">
-              <div className="flex items-center gap-1.5 text-xs font-sans font-semibold uppercase tracking-wider text-ink-primary dark:text-night-ink">
-                <ShieldAlert className="w-3.5 h-3.5 text-terracotta" />
-                <span>社区守则</span>
-              </div>
-              <ul className="space-y-2 text-xs font-sans text-ink-muted dark:text-night-muted">
-                {community.rules.map((rule, idx) => (
-                  <li key={idx} className="flex items-start gap-2">
-                    <span className="text-terracotta font-mono font-bold">
-                      {idx + 1}.
-                    </span>
-                    <span className="leading-relaxed">{rule}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+        </section>
+        <aside className="space-y-5">
+          {c.joined && (
+            <section className="panel aside-panel">
+              <h2 className="aside-heading">
+                <span>
+                  <CalendarDays size={22} />
+                  社区签到
+                </span>
+              </h2>
+              {stats.loading ? (
+                <p className="text-sm text-ink-muted dark:text-night-muted">
+                  正在加载签到记录…
+                </p>
+              ) : stats.error ? (
+                <ContentState
+                  title="签到记录加载失败"
+                  description={stats.error}
+                  onRetry={stats.reload}
+                />
+              ) : (
+                <>
+                  <p className="text-sm text-ink-muted dark:text-night-muted mb-4">
+                    累计签到 <strong>{stats.data?.totalDays ?? 0}</strong>{" "}
+                    天，连续 <strong>{stats.data?.consecutiveDays ?? 0}</strong>{" "}
+                    天。
+                  </p>
+                  <Button
+                    variant="secondary"
+                    className="w-full"
+                    isLoading={checking}
+                    disabled={stats.data?.checkedToday}
+                    onClick={checkIn}
+                  >
+                    {stats.data?.checkedToday ? (
+                      <>
+                        <Check size={17} />
+                        今日已签到
+                      </>
+                    ) : (
+                      "签到，和大家打个招呼"
+                    )}
+                  </Button>
+                </>
+              )}
+            </section>
           )}
+          <section className="panel aside-panel">
+            <h2 className="aside-heading">
+              <span>
+                <ShieldCheck size={22} />
+                社区约定
+              </span>
+            </h2>
+            <ol className="list-decimal pl-5 space-y-3 text-sm text-ink-muted dark:text-night-muted">
+              {(c.rules?.length
+                ? c.rules
+                : [
+                    "围绕社区主题交流，分享真实的想法。",
+                    "尊重他人，不发布攻击或引战内容。",
+                  ]
+              ).map((rule, i) => (
+                <li key={i}>{rule}</li>
+              ))}
+            </ol>
+            <div className="community-mascot-slot">
+              <PageMascot pose="community" />
+            </div>
+          </section>
         </aside>
-
       </div>
-
-      {isEditModalOpen && (
+      {editing && (
         <EditSalonModal
-          isOpen={isEditModalOpen}
-          onClose={() => setIsEditModalOpen(false)}
-          community={community}
-          onUpdated={(updated) => setCommunity(updated)}
+          isOpen={editing}
+          onClose={() => setEditing(false)}
+          community={c}
+          onUpdated={(updated) => {
+            community.setData(updated);
+            window.dispatchEvent(new Event("luminous:communities-changed"));
+          }}
         />
       )}
-
     </div>
   );
 };

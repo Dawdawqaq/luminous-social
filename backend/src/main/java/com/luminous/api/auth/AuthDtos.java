@@ -17,8 +17,12 @@ public final class AuthDtos {
             String username,
             
             @NotBlank @Size(min = 2, max = 96) String displayName,
-            @NotBlank @Size(min = 6, max = 72, message = "密码长度不能少于 6 位") String password
+            @NotBlank @Size(min = 6, max = 72, message = "密码长度不能少于 6 位") String password,
+            @Size(max = 64) String avatarPresetId
     ) {
+        public RegisterRequest(String username, String displayName, String password) {
+            this(username, displayName, password, null);
+        }
     }
 
     public record UpdateProfileRequest(
@@ -50,8 +54,13 @@ public final class AuthDtos {
             Boolean isFollowing,
             String role,
             Boolean isBanned,
-            com.luminous.api.growth.GrowthDtos.Progress growth
+            com.luminous.api.growth.GrowthDtos.Progress growth,
+            String accountType
     ) {
+        public UserDto(String id,String username,String displayName,String avatar,String banner,String bio,Stats stats,String joinDate,
+                       Boolean isFollowing,String role,Boolean isBanned,com.luminous.api.growth.GrowthDtos.Progress growth) {
+            this(id,username,displayName,avatar,banner,bio,stats,joinDate,isFollowing,role,isBanned,growth,"HUMAN");
+        }
     }
 
     public record Stats(long posts, long followers, long following) {

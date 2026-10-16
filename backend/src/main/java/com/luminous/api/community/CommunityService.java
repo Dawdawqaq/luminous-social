@@ -58,6 +58,11 @@ public class CommunityService {
             return List.of();
         }
 
+        return assembleMany(list, currentUser);
+    }
+
+    public List<CommunityDtos.CommunityDto> assembleMany(List<Community> list, CurrentUser currentUser) {
+        if (list.isEmpty()) return List.of();
         Set<Long> ownerIds = list.stream().map(Community::getOwnerId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, User> ownerMap = ownerIds.isEmpty() ? Map.of() : userMapper.selectBatchIds(ownerIds).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity(), (a, b) -> a));
@@ -163,8 +168,9 @@ public class CommunityService {
         community.setId(SnowflakeIdGenerator.getNextId());
         community.setOwnerId(currentUser.id());
         community.setSlug(request.slug());
-        community.setName(request.name());
-        community.setDescription(request.description());
+        community.setName(request.name().trim());
+        community.setDescription(request.description() == null ? "" : request.description().trim());
+        community.setCategory(request.category() == null ? "Living" : request.category());
         community.setMembersCount(1);
         community.setMembersUnit("members");
         community.setRulesJson("[]");
@@ -189,10 +195,10 @@ public class CommunityService {
         if (community.getOwnerId() == null || !community.getOwnerId().equals(currentUser.id())) {
             throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "只有吧主可以修改社区信息");
         }
-        community.setName(request.name());
+        community.setName(request.name().trim());
         community.setIconUrl(request.iconUrl());
         community.setBannerUrl(request.bannerUrl());
-        community.setDescription(request.description());
+        community.setDescription(request.description() == null ? "" : request.description().trim());
         try {
             community.setRulesJson(objectMapper.writeValueAsString(request.rules() == null ? java.util.List.of() : request.rules()));
         } catch (Exception e) {
@@ -246,7 +252,8 @@ public class CommunityService {
                 readRules(community.getRulesJson()),
                 assembleModerators(community.getModeratorsJson(), owner),
                 joined,
-                community.getOwnerId() == null ? null : String.valueOf(community.getOwnerId())
+                community.getOwnerId() == null ? null : String.valueOf(community.getOwnerId()),
+                community.getCategory() == null ? "Living" : community.getCategory()
         );
     }
 
@@ -254,6 +261,13 @@ public class CommunityService {
         return communityMemberMapper.selectCount(new LambdaQueryWrapper<CommunityMember>()
                 .eq(CommunityMember::getCommunityId, communityId)
                 .eq(CommunityMember::getUserId, userId)) > 0;
+    }
+
+    /** 发布事务锁定成员关系，避免退出社区与发布之间出现检查后状态变化。 */
+    public void requireMembership(long communityId, long userId) {
+        var member = communityMemberMapper.selectOne(new LambdaQueryWrapper<CommunityMember>()
+                .eq(CommunityMember::getCommunityId, communityId).eq(CommunityMember::getUserId, userId).last("FOR SHARE"));
+        if (member == null) throw new BusinessException(HttpStatus.FORBIDDEN, "COMMUNITY_JOIN_REQUIRED", "请先加入社区再发布帖子");
     }
 
     private List<String> readRules(String json) {

@@ -1,9 +1,9 @@
-# Multi-stage Dockerfile for Luminous Frontend (React 18 + Vite)
+# 新版前端独立构建，不改动原前端容器配置
 FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY . .
 RUN npm run build

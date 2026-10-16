@@ -1,38 +1,32 @@
-import React from 'react';
-import { Navbar } from './Navbar';
-import { Footer } from './Footer';
-import { ArtisticBackground } from './ArtisticBackground';
-
+import React from "react";
+import { Navbar } from "./Navbar";
+import { Sidebar } from "./Sidebar";
 interface AppLayoutProps {
   children: React.ReactNode;
-  onOpenAuth: () => void;
+  onOpenAuth: (mode?: "login" | "register") => void;
   onOpenCreatePost: () => void;
   onOpenNotifications: () => void;
 }
-
 export const AppLayout: React.FC<AppLayoutProps> = ({
   children,
-  onOpenAuth,
-  onOpenCreatePost,
-  onOpenNotifications,
-}) => {
-  return (
-    <div className="relative min-h-screen flex flex-col bg-paper-100 dark:bg-night-canvas text-ink-primary dark:text-night-ink transition-colors duration-200 overflow-x-hidden">
-      {/* Claude-inspired Organic Artistic & Celestial Background */}
-      <ArtisticBackground />
-
-      {/* Main Content Layer */}
-      <div className="relative z-10 flex flex-col min-h-screen">
-        <Navbar
-          onOpenAuth={onOpenAuth}
-          onOpenCreatePost={onOpenCreatePost}
-          onOpenNotifications={onOpenNotifications}
-        />
-        <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-6 md:py-8">
-          {children}
-        </main>
-        <Footer />
-      </div>
+  ...actions
+}) => (
+  <div className="min-h-screen">
+    <a
+      href="#main-content"
+      className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-white focus:p-3 focus:text-black"
+    >
+      跳转到主要内容
+    </a>
+    <Navbar {...actions} />
+    <div className="site-frame">
+      <Sidebar
+        onOpenAuth={actions.onOpenAuth}
+        onOpenCreatePost={actions.onOpenCreatePost}
+      />
+      <main id="main-content" className="page-main">
+        {children}
+      </main>
     </div>
-  );
-};
+  </div>
+);

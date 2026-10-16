@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
-import { Modal } from '../ui/Modal';
-import { Input } from '../ui/Input';
-import { Textarea } from '../ui/Textarea';
-import { Button } from '../ui/Button';
-import { communityApi } from '../../api/client';
-import { useToast } from '../../context/ToastContext';
+import React, { useRef, useState } from "react";
+import { Modal } from "../ui/Modal";
+import { Input } from "../ui/Input";
+import { Textarea } from "../ui/Textarea";
+import { Button } from "../ui/Button";
+import { communityApi } from "../../api/client";
+import { useToast } from "../../context/ToastContext";
 
 interface CreateSalonModalProps {
   isOpen: boolean;
@@ -18,21 +18,39 @@ export const CreateSalonModal: React.FC<CreateSalonModalProps> = ({
   onCreated,
 }) => {
   const { showToast } = useToast();
-  const [slug, setSlug] = useState('');
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState('Philosophy');
-  const [description, setDescription] = useState('');
+  const [slug, setSlug] = useState("");
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("Living");
+  const [description, setDescription] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const pending = useRef(false);
 
-  const categories = ['Philosophy', 'Craft', 'Aesthetics', 'Living', 'Systems', 'Literature'];
+  const categories = [
+    "Philosophy",
+    "Craft",
+    "Aesthetics",
+    "Living",
+    "Systems",
+    "Literature",
+  ];
+  const categoryLabels: Record<string, string> = {
+    Philosophy: "交流思考",
+    Craft: "手作创作",
+    Aesthetics: "艺术审美",
+    Living: "生活兴趣",
+    Systems: "科技数码",
+    Literature: "读书写作",
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (pending.current) return;
     if (!slug.trim() || !name.trim()) {
-      showToast('请填写沙龙英文标识与中文名称', 'error');
+      showToast("请填写社区短名称和显示名称", "error");
       return;
     }
 
+    pending.current = true;
     try {
       setIsLoading(true);
       await communityApi.create({
@@ -42,12 +60,14 @@ export const CreateSalonModal: React.FC<CreateSalonModalProps> = ({
         description: description.trim(),
       });
 
-      showToast('沙龙房间已开辟', 'success');
+      showToast("社区已创建", "success");
       onCreated(slug.trim().toLowerCase());
+      setSlug(""); setName(""); setDescription("");
       onClose();
     } catch (err: any) {
-      showToast(err.message || '创建沙龙失败', 'error');
+      showToast(err.message || "创建社区失败", "error");
     } finally {
+      pending.current = false;
       setIsLoading(false);
     }
   };
@@ -56,22 +76,27 @@ export const CreateSalonModal: React.FC<CreateSalonModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="开辟沙龙房间 · Open a Salon"
-      subtitle="为特定领域的深度思想与研讨建立专属空间"
+      dismissible={!isLoading}
+      title="创建社区"
+      subtitle="为喜欢的主题，找一群聊得来的朋友。"
       maxWidth="md"
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4"><fieldset disabled={isLoading} className="space-y-4">
         <Input
-          label="沙龙英文标识 (Slug)"
-          placeholder="输入唯一英文标识 (如 aesthetics, slow-code)"
+          label="社区短名称"
+          maxLength={64}
+          placeholder="例如 photography、reading"
           value={slug}
-          onChange={(e) => setSlug(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-          hint="唯一标识符，将用于 URL 地址 /s/{slug}"
+          onChange={(e) =>
+            setSlug(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))
+          }
+          hint="用于社区链接，可使用字母、数字、下划线和短横线。"
           required
         />
 
         <Input
-          label="沙龙显示名称"
+          label="社区名称"
+          maxLength={96}
           placeholder="输入社区对外呈现的完整名称"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -79,25 +104,30 @@ export const CreateSalonModal: React.FC<CreateSalonModalProps> = ({
         />
 
         <div>
-          <label className="block text-xs font-sans font-medium text-ink-muted dark:text-night-muted uppercase mb-1.5">
+          <label
+            htmlFor="community-category"
+            className="block text-sm font-sans font-semibold mb-2"
+          >
             所属领域分类
           </label>
           <select
+            id="community-category"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="w-full px-3 py-2 text-sm font-sans bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] text-ink-primary dark:text-night-ink focus:outline-none"
+            className="w-full px-3 py-2 text-sm font-sans bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-md text-ink-primary dark:text-night-ink focus:outline-none"
           >
             {categories.map((cat) => (
               <option key={cat} value={cat}>
-                {cat}
+                {categoryLabels[cat]}
               </option>
             ))}
           </select>
         </div>
 
         <Textarea
-          label="沙龙主旨与宣言"
-          placeholder="阐述本沙龙的主旨、讨论范畴与期待的讨论氛围..."
+          label="社区简介"
+          maxLength={1024}
+          placeholder="这里聊什么？用几句话介绍给大家。"
           rows={3}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -108,10 +138,10 @@ export const CreateSalonModal: React.FC<CreateSalonModalProps> = ({
             取消
           </Button>
           <Button type="submit" size="sm" isLoading={isLoading}>
-            确认开辟沙龙
+            创建社区
           </Button>
         </div>
-      </form>
+      </fieldset></form>
     </Modal>
   );
 };

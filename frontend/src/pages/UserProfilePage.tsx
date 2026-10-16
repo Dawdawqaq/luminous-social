@@ -1,244 +1,260 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { User, Post } from '../types';
-import { userApi, postApi } from '../api/client';
-import { Avatar } from '../components/ui/Avatar';
-import { Button } from '../components/ui/Button';
-import { PostCard } from '../components/post/PostCard';
-import { EditProfileModal } from '../components/auth/EditProfileModal';
-import { useAuth } from '../context/AuthContext';
-import { useToast } from '../context/ToastContext';
-import { Calendar, UserPlus, UserCheck, Settings, Loader2 } from 'lucide-react';
-
-interface UserProfilePageProps {
-  onRequireAuth: () => void;
-}
-
-export const UserProfilePage: React.FC<UserProfilePageProps> = ({ onRequireAuth }) => {
-  const { username } = useParams<{ username: string }>();
-  const { user: currentUser, isAuthenticated } = useAuth();
+import React, { useEffect, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Camera, Settings, UserPlus, UserCheck } from "lucide-react";
+import { User, Post } from "../types";
+import { userApi, postApi } from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { useFollowActions } from "../context/FollowContext";
+import { useToast } from "../context/ToastContext";
+import { useRemoteData } from "../hooks/useRemoteData";
+import { Avatar } from "../components/ui/Avatar";
+import { LevelBadge } from "../components/ui/LevelBadge";
+import { LevelGuideModal } from "../components/ui/LevelGuideModal";
+import { Button } from "../components/ui/Button";
+import { ContentState } from "../components/common/ContentState";
+import { PageMascot } from "../components/common/PageMascot";
+import { PostCard } from "../components/post/PostCard";
+import { EditProfileModal } from "../components/auth/EditProfileModal";
+import { AvatarPickerModal } from "../components/auth/AvatarPickerModal";
+import { FollowUserList } from "../components/auth/FollowUserList";
+import { PageBackButton } from "../components/common/PageBackButton";
+export const UserProfilePage: React.FC<{ onRequireAuth: () => void }> = ({
+  onRequireAuth,
+}) => {
+  const { username = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const activeTab = requestedTab === "followers" || requestedTab === "following" ? requestedTab : "posts";
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const follows = useFollowActions();
   const { showToast } = useToast();
-
-  const [profile, setProfile] = useState<User | null>(null);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [isFollowLoading, setIsFollowLoading] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-
-  const isOwnProfile = currentUser?.username === username;
-
-  const fetchProfile = useCallback(async () => {
-    if (!username) return;
-    try {
-      setIsLoading(true);
-      const [userRes, postsRes] = await Promise.allSettled([
-        userApi.getProfile(username),
-        postApi.list({ author: username, filter: 'new', size: 20 }),
-      ]);
-
-      if (userRes.status === 'fulfilled' && userRes.value) {
-        setProfile(userRes.value);
-        setIsFollowing(!!userRes.value.isFollowing);
-      }
-      if (postsRes.status === 'fulfilled' && postsRes.value.items) {
-        setPosts(postsRes.value.items);
-      }
-    } catch {
-    } finally {
-      setIsLoading(false);
-    }
-  }, [username]);
-
+  const profile = useRemoteData<User | null>(
+    () => userApi.getProfile(username),
+    [username, user?.id],
+    null,
+    !authLoading,
+  );
+  const posts = useRemoteData<Post[]>(
+    async () =>
+      (await postApi.list({ author: username, filter: "new", size: 20 })).items,
+    [username, user?.id],
+    [],
+    !authLoading,
+  );
+  const [editing, setEditing] = useState(false);
+  const [editingAvatar, setEditingAvatar] = useState(false);
+  const [viewingLevels, setViewingLevels] = useState(false);
+  useEffect(() => { setViewingLevels(false); setEditingAvatar(false); setEditing(false); }, [username, user?.id]);
   useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
-
-  const handleFollowToggle = async () => {
+    if (user) profile.setData(current => current?.id === user.id ? { ...current, ...user } : current);
+  }, [user, profile.setData]);
+  useEffect(()=> {
+    const change=follows.change;
+    if(!change) return;
+    profile.setData(current=> {
+      if(!current) return current;
+      if(current.id===change.target.id) return change.target;
+      return current.id===user?.id && change.actorStats ? {...current,stats:change.actorStats} : current;
+    });
+  },[follows.change,user?.id,profile.setData]);
+  const follow = async () => {
     if (!isAuthenticated) {
       onRequireAuth();
       return;
     }
-    if (!username || isFollowLoading) return;
-
+    if (!profile.data) return;
     try {
-      setIsFollowLoading(true);
-      if (isFollowing) {
-        await userApi.unfollow(username).catch(() => {});
-        setIsFollowing(false);
-        showToast(`已取消关注 @${username}`, 'info');
-      } else {
-        await userApi.follow(username).catch(() => {});
-        setIsFollowing(true);
-        showToast(`已关注 @${username}`, 'success');
-      }
-    } catch (err: any) {
-      showToast(err.message || '操作失败', 'error');
-    } finally {
-      setIsFollowLoading(false);
+      await follows.setFollowing(profile.data,!profile.data.isFollowing);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "关注操作失败", "error");
     }
   };
-
-  if (isLoading) {
+  if (profile.loading || authLoading)
     return (
-      <div className="py-32 text-center space-y-3">
-        <Loader2 className="w-8 h-8 animate-spin mx-auto text-ink-subtle" />
-        <p className="font-serif italic text-sm text-ink-muted dark:text-night-muted">
-          正在载入用户手记与主页...
-        </p>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <PageBackButton />
+        <div className="panel">
+        <ContentState title="正在加载个人主页" loading />
+        </div>
       </div>
     );
-  }
-
-  if (!profile) {
+  if (profile.error || !profile.data)
     return (
-      <div className="py-24 text-center space-y-4">
-        <h2 className="font-serif text-2xl font-medium text-ink-primary dark:text-night-ink">
-          未找到该用户
-        </h2>
-        <Link to="/">
-          <Button variant="outline" size="sm">
-            返回社区首页
-          </Button>
-        </Link>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <PageBackButton />
+        <div className="panel">
+        <ContentState
+          title="个人主页暂时无法打开"
+          description={profile.error || "没有找到该用户。"}
+          onRetry={profile.reload}
+        />
+        </div>
       </div>
     );
-  }
-
+  const p = profile.data;
+  const own = user?.id === p.id;
   return (
-    <div className="space-y-8 animate-in fade-in duration-150">
-      
-      {/* Profile Header Card */}
-      <div className="bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] shadow-tactile p-6 sm:p-8 space-y-6">
-        
-        <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-          <div className="flex items-start gap-4">
-            <Avatar
-              src={profile.avatar}
-              name={profile.displayName || profile.username}
-              size="xl"
-            />
-            <div className="space-y-1">
-              <h1 className="font-serif text-2xl sm:text-3xl font-medium text-ink-primary dark:text-night-ink">
-                {profile.displayName || profile.username}
-              </h1>
-              <p className="text-xs font-sans text-ink-subtle dark:text-night-subtle">
-                @{profile.username}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {isOwnProfile ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsEditModalOpen(true)}
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>编辑资料</span>
-              </Button>
-            ) : (
-              <Button
-                variant={isFollowing ? 'secondary' : 'primary'}
-                size="sm"
-                onClick={handleFollowToggle}
-                isLoading={isFollowLoading}
-              >
-                {isFollowing ? (
-                  <>
-                    <UserCheck className="w-3.5 h-3.5" />
-                    <span>已关注 (Following)</span>
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>关注创作者 (Follow)</span>
-                  </>
-                )}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* Bio */}
-        {profile.bio && (
-          <blockquote className="font-serif italic text-sm sm:text-base text-ink-muted dark:text-night-muted leading-relaxed border-l-2 border-terracotta/40 pl-4 py-0.5 max-w-2xl">
-            “{profile.bio}”
-          </blockquote>
+    <div className="max-w-5xl mx-auto space-y-6">
+      <PageBackButton />
+      <header className="panel overflow-hidden">
+        {p.banner && (
+          <img
+            className="w-full h-32 sm:h-44 object-cover"
+            src={p.banner}
+            alt="个人主页封面"
+          />
         )}
-
-        {/* Stats */}
-        <div className="flex flex-wrap items-center gap-6 pt-4 hairline-t text-xs font-sans text-ink-muted dark:text-night-muted">
-          <span>
-            <strong className="text-ink-primary dark:text-night-ink font-medium">
-              {profile.stats?.posts || posts.length}
-            </strong>{' '}
-            篇帖子
-          </span>
-          <span>
-            <strong className="text-ink-primary dark:text-night-ink font-medium">
-              {profile.stats?.followers || 0}
-            </strong>{' '}
-            关注者
-          </span>
-          <span>
-            <strong className="text-ink-primary dark:text-night-ink font-medium">
-              {profile.stats?.following || 0}
-            </strong>{' '}
-            正在关注
-          </span>
-          {profile.joinDate && (
-            <span className="flex items-center gap-1 text-ink-subtle">
-              <Calendar className="w-3.5 h-3.5" />
-              <span>加入于 {profile.joinDate}</span>
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Published Posts */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-6 pb-2 hairline-b text-xs font-sans">
-          <span className="font-semibold text-ink-primary dark:text-night-ink border-b-2 border-terracotta pb-2">
-            TA 发表的帖子 ({posts.length})
-          </span>
-        </div>
-
-        {posts.length === 0 ? (
-          <div className="py-16 text-center space-y-2 bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px]">
-            <p className="font-serif italic text-sm text-ink-muted dark:text-night-muted">
-              该用户尚未公开发表帖子。
-            </p>
+        <div className="p-6 sm:p-8">
+          <div className="flex justify-between gap-4 items-start">
+            <div className="flex gap-4 min-w-0">
+              {own ? <button type="button" aria-label="更换头像" onClick={() => setEditingAvatar(true)}
+                className={`group relative flex shrink-0 self-start rounded-full ${p.banner ? "-mt-12 sm:-mt-14" : ""}`}>
+                <Avatar src={p.avatar} name={p.displayName || p.username} size="xl"
+                  className={p.banner ? "ring-4 ring-white dark:ring-night-surface !w-20 !h-20 sm:!w-24 sm:!h-24" : undefined} />
+                <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border border-ink-primary bg-white text-ink-primary group-hover:bg-ochre-light dark:border-night-border dark:bg-night-surface dark:text-night-ink">
+                  <Camera size={15} aria-hidden="true" />
+                </span>
+              </button> : <Avatar
+                src={p.avatar}
+                name={p.displayName || p.username}
+                size="xl"
+                className={p.banner ? "-mt-12 sm:-mt-14 ring-4 ring-white dark:ring-night-surface !w-20 !h-20 sm:!w-24 sm:!h-24" : undefined}
+              />}
+              <div className="min-w-0">
+                <h1 className="text-2xl sm:text-3xl font-extrabold break-words">
+                  {p.displayName || p.username}
+                  {p.accountType === "BOT" && <span className="ml-2 text-sm font-semibold text-terracotta dark:text-terracotta-dark">AI</span>}
+                </h1>
+                {p.growth && (
+                  <div className="flex flex-wrap items-center gap-2 mt-1 text-sm text-ink-muted dark:text-night-muted">
+                    <LevelBadge level={p.growth.level} scope="personal" onClick={() => setViewingLevels(true)} />
+                    <span>{p.growth.experience.toLocaleString()} 经验</span>
+                    <span>{p.growth.maxLevel ? "已满级" : `距下一级 ${p.growth.experienceToNextLevel.toLocaleString()} 经验`}</span>
+                  </div>
+                )}
+                <p className="text-sm text-ink-muted dark:text-night-muted break-all">
+                  @{p.username}
+                </p>
+              </div>
+            </div>
+            {own ? (
+              <Button
+                aria-label="编辑资料"
+                size="sm"
+                variant="outline"
+                onClick={() => setEditing(true)}
+              >
+                <Settings size={17} />
+                <span className="hidden sm:inline">编辑资料</span>
+              </Button>
+            ) : p.accountType !== "BOT" ? (
+              <Button
+                size="sm"
+                variant={p.isFollowing ? "outline" : "primary"}
+                isLoading={follows.pendingUserId===p.id}
+                disabled={follows.busy || follows.remainingSeconds>0}
+                title={p.isFollowing ? "点击取消关注" : "关注这个用户"}
+                onClick={follow}
+              >
+                {p.isFollowing ? (
+                  <UserCheck size={17} />
+                ) : (
+                  <UserPlus size={17} />
+                )}
+                <span>{follows.remainingSeconds>0 ? `${follows.remainingSeconds} 秒后` : p.isFollowing ? "已关注" : "关注"}</span>
+              </Button>
+            ) : null}
           </div>
-        ) : (
-          <div className="divide-y divide-paper-300 dark:divide-night-border">
-            {posts.map((post) => (
+          {p.bio && (
+            <p className="mt-5 whitespace-pre-wrap text-sm sm:text-base text-ink-muted dark:text-night-muted">
+              {p.bio}
+            </p>
+          )}
+          <div className="profile-summary mt-6 pt-5 hairline-t">
+            <div className="profile-statistics text-sm text-ink-muted dark:text-night-muted">
+              <Link replace to="?tab=posts" className="profile-statistic-link" aria-label={`查看帖子列表，${p.stats?.posts ?? posts.data.length} 篇`}>
+                <strong className="text-ink-primary dark:text-night-ink">
+                  {p.stats?.posts ?? posts.data.length}
+                </strong>{" "}
+                篇帖子
+              </Link>
+              <Link replace to="?tab=followers" className="profile-statistic-link" aria-label={`查看粉丝列表，${p.stats?.followers ?? 0} 人`}>
+                <strong className="text-ink-primary dark:text-night-ink">
+                  {p.stats?.followers ?? 0}
+                </strong>{" "}
+                位关注者
+              </Link>
+              <Link replace to="?tab=following" className="profile-statistic-link" aria-label={`查看关注列表，${p.stats?.following ?? 0} 人`}>
+                <strong className="text-ink-primary dark:text-night-ink">
+                  {p.stats?.following ?? 0}
+                </strong>{" "}
+                正在关注
+              </Link>
+            </div>
+            <PageMascot pose="profile" className="profile-mascot" />
+          </div>
+        </div>
+      </header>
+      <section className="panel overflow-hidden">
+        <nav className="feed-tabs" aria-label="个人主页内容">
+          {([
+            ["posts", own ? "我的帖子" : "TA 的帖子"],
+            ["followers", "粉丝列表"],
+            ["following", "关注列表"],
+          ] as const).map(([tab, label]) => (
+            <Link key={tab} replace to={`?tab=${tab}`} className="feed-tab" aria-current={activeTab === tab ? "page" : undefined}>
+              {label}
+            </Link>
+          ))}
+        </nav>
+        <div className="px-5">
+          {activeTab !== "posts" ? (
+            <FollowUserList key={`${username}:${activeTab}`} username={username} kind={activeTab} own={own} onRequireAuth={onRequireAuth} />
+          ) : posts.loading ? (
+            <ContentState title="正在加载帖子" loading />
+          ) : posts.error ? (
+            <ContentState
+              title="帖子加载失败"
+              description={posts.error}
+              onRetry={posts.reload}
+            />
+          ) : posts.data.length ? (
+            posts.data.map((post) => (
               <PostCard
                 key={post.id}
                 post={post}
                 onRequireAuth={onRequireAuth}
                 onVoteChange={(updated) =>
-                  setPosts((prev) =>
-                    prev.map((p) => (p.id === updated.id ? updated : p))
+                  posts.setData((previous) =>
+                    previous.map((item) =>
+                      item.id === updated.id ? updated : item,
+                    ),
                   )
                 }
               />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {isEditModalOpen && (
+            ))
+          ) : (
+            <ContentState
+              title="还没有公开帖子"
+              description="之后分享的内容会出现在这里。"
+              showIcon={false}
+            />
+          )}
+        </div>
+      </section>
+      {p.growth && viewingLevels && <LevelGuideModal isOpen onClose={() => setViewingLevels(false)}
+        progress={p.growth} displayName={p.displayName || p.username} own={own} />}
+      {own && editingAvatar && <AvatarPickerModal key={user.id} onClose={() => setEditingAvatar(false)}
+        onSaved={(updated) => profile.setData(updated)} />}
+      {editing && (
         <EditProfileModal
-          isOpen={isEditModalOpen}
+          isOpen={editing}
           onClose={() => {
-            setIsEditModalOpen(false);
-            fetchProfile();
+            setEditing(false);
+            profile.reload();
           }}
         />
       )}
-
     </div>
   );
 };

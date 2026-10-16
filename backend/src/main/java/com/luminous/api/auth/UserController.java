@@ -23,6 +23,12 @@ public class UserController {
         this.authService = authService;
     }
 
+    @Operation(summary = "获取内置头像与主页背景预设")
+    @GetMapping("/profile-presets")
+    public ApiResponse<ProfilePresetCatalog.Catalog> profilePresets() {
+        return ApiResponse.ok(ProfilePresetCatalog.catalog());
+    }
+
     @Operation(summary = "搜索用户")
     @GetMapping
     public ApiResponse<java.util.List<AuthDtos.UserDto>> searchUsers(

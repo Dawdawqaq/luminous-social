@@ -1,311 +1,221 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Post, Comment } from '../types';
-import { postApi } from '../api/client';
-import { Avatar } from '../components/ui/Avatar';
-import { Button } from '../components/ui/Button';
-import { MarkdownRenderer } from '../components/ui/MarkdownRenderer';
-import { MarginaliaSidebar } from '../components/post/MarginaliaSidebar';
-import { CommentThread } from '../components/post/CommentThread';
-import { formatTimeAgo, estimateReadingTime, formatEchoes } from '../utils';
-import { useAuth } from '../context/AuthContext';
-import { useToast } from '../context/ToastContext';
-import { ArrowLeft, Trash2, Bookmark, Share2, Loader2, ArrowBigUp, Eye } from 'lucide-react';
-
-interface PostDetailPageProps {
-  onRequireAuth: () => void;
-}
-
-export const PostDetailPage: React.FC<PostDetailPageProps> = ({ onRequireAuth }) => {
-  const { id } = useParams<{ id: string }>();
+import React, { useEffect, useRef, useState } from "react";
+import { Link, useParams, useNavigate } from "react-router-dom";
+import {
+  Bookmark,
+  Share2,
+  ThumbsUp,
+  Trash2,
+  Eye,
+} from "lucide-react";
+import { Post } from "../types";
+import { postApi } from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
+import { useCommunities } from "../context/CommunityContext";
+import { useRemoteData } from "../hooks/useRemoteData";
+import { Avatar } from "../components/ui/Avatar";
+import { LevelBadge } from "../components/ui/LevelBadge";
+import { MarkdownRenderer } from "../components/ui/MarkdownRenderer";
+import { CommentThread } from "../components/post/CommentThread";
+import { ContentState } from "../components/common/ContentState";
+import { PageMascot } from "../components/common/PageMascot";
+import { DeleteConfirmModal } from "../components/ui/DeleteConfirmModal";
+import { PageBackButton } from "../components/common/PageBackButton";
+import { formatTimeAgo } from "../utils";
+export const PostDetailPage: React.FC<{ onRequireAuth: () => void }> = ({
+  onRequireAuth,
+}) => {
+  const { id = "" } = useParams();
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const { showToast } = useToast();
-
-  const [post, setPost] = useState<Post | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isVoting, setIsVoting] = useState(false);
-  const [isBookmarking, setIsBookmarking] = useState(false);
-  const [readingProgress, setReadingProgress] = useState(0);
-
+  const { communities } = useCommunities();
+  const post = useRemoteData<Post | null>(
+    () => postApi.getById(id),
+    [id, user?.id],
+    null,
+    !authLoading,
+  );
+  const [pending, setPending] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Post | null>(null);
+  const busy = useRef(false);
   useEffect(() => {
-    if (!id) return;
-    setIsLoading(true);
-    if (!window.location.hash) {
-      setReadingProgress(0);
-      window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    }
-
-    Promise.allSettled([
-      postApi.getById(id),
-      postApi.getComments(id),
-    ]).then(([postRes, commentsRes]) => {
-      if (postRes.status === 'fulfilled') {
-        setPost(postRes.value);
-      }
-      if (commentsRes.status === 'fulfilled') {
-        setComments(commentsRes.value || []);
-      }
-      setIsLoading(false);
-    });
+    setDeleteTarget(null);
   }, [id]);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      const totalHeight = document.documentElement.scrollHeight - window.innerHeight;
-      if (totalHeight > 0) {
-        setReadingProgress(Math.min(100, Math.max(0, (window.scrollY / totalHeight) * 100)));
-      }
-    };
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  const handleVote = async () => {
+  const act = async (kind: "vote" | "bookmark") => {
     if (!isAuthenticated) {
       onRequireAuth();
       return;
     }
-    if (!post || isVoting) return;
-
+    if (!post.data || busy.current) return;
+    const current = post.data;
+    busy.current = true;
+    setPending(kind);
     try {
-      setIsVoting(true);
-      const newVoteValue = post.userVote === 1 ? 0 : 1;
-      const updated = await postApi.vote(post.id, newVoteValue);
-      setPost(updated);
-      showToast(newVoteValue === 1 ? '已送出赞同与共鸣' : '已取消赞同', 'info');
-    } catch (err: any) {
-      showToast(err.message || '操作失败', 'error');
-    } finally {
-      setIsVoting(false);
-    }
-  };
-
-  const handleBookmark = async () => {
-    if (!isAuthenticated) {
-      onRequireAuth();
-      return;
-    }
-    if (!post || isBookmarking) return;
-
-    try {
-      setIsBookmarking(true);
-      if (post.bookmarked) {
-        await postApi.removeBookmark(post.id);
-        setPost({ ...post, bookmarked: false });
-        showToast('已从收藏中移除', 'info');
-      } else {
-        const updated = await postApi.bookmark(post.id);
-        setPost(updated);
-        showToast('已加入我的收藏', 'success');
+      if (kind === "vote")
+        post.setData(
+          await postApi.vote(current.id, current.userVote === 1 ? 0 : 1),
+        );
+      else if (kind === "bookmark") {
+        if (current.bookmarked) {
+          await postApi.removeBookmark(current.id);
+          post.setData({ ...current, bookmarked: false });
+        } else post.setData(await postApi.bookmark(current.id));
       }
-    } catch (err: any) {
-      showToast(err.message || '操作失败', 'error');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "操作失败", "error");
     } finally {
-      setIsBookmarking(false);
+      busy.current = false;
+      setPending("");
     }
   };
-
-  const handleShare = () => {
-    navigator.clipboard.writeText(window.location.href);
-    showToast('帖子链接已复制到剪贴板', 'success');
-  };
-
-  const handleDelete = async () => {
-    if (!post || !confirm('确认删除这篇帖子吗？')) return;
+  const deletePost = async () => {
+    if (!deleteTarget || !isAuthenticated) throw new Error("请重新登录后再删除帖子。");
+    if (busy.current) throw new Error("帖子正在处理中，请稍后再试。");
+    busy.current = true;
+    setPending("delete");
     try {
-      await postApi.delete(post.id);
-      showToast('帖子已删除', 'info');
-      navigate('/');
-    } catch (err: any) {
-      showToast(err.message || '删除失败', 'error');
+      await postApi.delete(deleteTarget.id);
+      showToast("帖子已删除", "success");
+      navigate("/");
+    } finally {
+      busy.current = false;
+      setPending("");
     }
   };
-
-  if (isLoading) {
+  const share = async () => {
+    try {
+      await navigator.clipboard.writeText(location.origin + "/post/" + id);
+      showToast("链接已复制", "success");
+    } catch {
+      showToast("复制失败，请复制地址栏中的链接", "error");
+    }
+  };
+  if (post.loading || authLoading)
     return (
-      <div className="py-32 text-center space-y-3">
-        <Loader2 className="w-8 h-8 animate-spin mx-auto text-ink-subtle" />
-        <p className="font-serif italic text-sm text-ink-muted dark:text-night-muted">
-          正在载入帖子正文...
-        </p>
+      <div className="max-w-4xl mx-auto space-y-5">
+        <PageBackButton />
+        <div className="panel">
+        <ContentState title="正在加载帖子" loading />
+        </div>
       </div>
     );
-  }
-
-  if (!post) {
+  if (post.error || !post.data)
     return (
-      <div className="py-24 text-center space-y-4">
-        <h2 className="font-serif text-2xl font-medium text-ink-primary dark:text-night-ink">
-          帖子不存在或已被删除
-        </h2>
-        <Link to="/" className="inline-block">
-          <Button variant="outline" size="sm">
-            返回社区首页
-          </Button>
-        </Link>
+      <div className="max-w-4xl mx-auto space-y-5">
+        <PageBackButton />
+        <div className="panel">
+        <ContentState
+          title="帖子暂时无法打开"
+          description={post.error || "帖子不存在或已删除。"}
+          onRetry={post.reload}
+        />
+        </div>
       </div>
     );
-  }
-
-  const isAuthor = user?.username === post.author.username;
-  const readingTime = estimateReadingTime(post.content);
-  const communitySlug = (post.community?.name || 'Craft').replace(/^c\//, '');
-
+  const p = post.data;
+  const slug = (p.community?.name || "").replace(/^c\//, "");
+  const name =
+    communities.find((c) => c.name.replace(/^c\//, "") === slug)?.displayName ||
+    slug;
   return (
-    <div className="space-y-6 md:space-y-8 animate-in fade-in duration-150">
-      <div
-        className="fixed top-0 left-0 h-[2px] bg-terracotta dark:bg-terracotta-dark z-50 transition-all duration-75"
-        style={{ width: `${readingProgress}%` }}
-      />
-
-      <div className="flex items-center justify-between text-xs font-sans text-ink-muted dark:text-night-muted pb-1">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(-1)}
-            className="inline-flex items-center gap-1.5 hover:text-ink-primary dark:hover:text-night-ink transition-colors cursor-pointer"
-            title="返回上一级页面"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>返回上一页</span>
-          </button>
-          <span className="text-ink-subtle">·</span>
-          <Link
-            to={`/s/${communitySlug}`}
-            className="hover:text-ink-primary dark:hover:text-night-ink transition-colors text-terracotta font-medium"
-          >
-            c/{communitySlug} 社区
-          </Link>
-        </div>
-
-        <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-terracotta font-medium">
-          {post.viewCount !== undefined && post.viewCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-ink-muted dark:text-night-muted font-mono font-normal">
-              <Eye className="w-3.5 h-3.5 text-ink-subtle" />
-              {post.viewCount} 位独立访客（近似）
-            </span>
-          )}
-          <span>{post.type === 'ESSAY' ? '深度长文' : '社区探讨'} · {readingTime} 分钟阅读</span>
-        </div>
+    <div className="max-w-4xl mx-auto space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <PageBackButton fallback={slug ? "/s/" + encodeURIComponent(slug) : "/"} fallbackLabel={slug ? "返回社区" : "返回首页"} />
+        {slug && <Link className="text-sm text-ink-muted hover:text-terracotta dark:text-night-muted dark:hover:text-terracotta-dark" to={"/s/" + encodeURIComponent(slug)}>{name}</Link>}
       </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
-        <div className="lg:col-span-8 space-y-6">
-          <header className="space-y-4 pb-6 hairline-b">
-            <h1 className="font-serif text-2xl sm:text-3xl md:text-4xl font-medium text-ink-primary dark:text-night-ink leading-[1.25] tracking-tight">
-              {post.title}
-            </h1>
-
-            <div className="flex flex-wrap items-center justify-between gap-4 pt-1 text-xs font-sans text-ink-muted dark:text-night-muted">
-              <Link
-                to={`/u/${post.author.username}`}
-                className="flex items-center gap-2.5 hover:text-ink-primary dark:hover:text-night-ink"
-              >
-                <Avatar
-                  src={post.author.avatar}
-                  name={post.author.displayName || post.author.username}
-                  size="md"
-                />
-                <div>
-                  <p className="font-medium text-ink-primary dark:text-night-ink">
-                    {post.author.displayName || post.author.username}
-                  </p>
-                  <p className="text-[11px] text-ink-subtle dark:text-night-subtle">
-                    发布于 {formatTimeAgo(post.timestamp)}
-                  </p>
-                </div>
-              </Link>
-
-              <div className="flex items-center gap-2">
-                {isAuthor && (
-                  <button
-                    onClick={handleDelete}
-                    className="p-1.5 text-ink-subtle hover:text-terracotta transition-colors cursor-pointer"
-                    title="删除帖子"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-                <button
-                  onClick={handleShare}
-                  className="p-1.5 text-ink-muted hover:text-ink-primary dark:text-night-muted dark:hover:text-night-ink transition-colors cursor-pointer"
-                  title="分享帖子"
-                >
-                  <Share2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          </header>
-
-          {post.image && (
-            <div className="w-full max-h-[420px] overflow-hidden rounded-[2px] border border-paper-300 dark:border-night-border my-4 shadow-tactile">
-              <img
-                src={post.image.startsWith('/') ? post.image : post.image.startsWith('http') ? post.image : `/${post.image}`}
-                alt={post.title}
-                className="w-full h-full object-cover"
-              />
-            </div>
-          )}
-
-          <main className="py-2">
-            <MarkdownRenderer content={post.content} />
-          </main>
-
-          <div className="flex flex-wrap items-center justify-between gap-4 py-4 hairline-t hairline-b text-xs font-sans text-ink-muted dark:text-night-muted">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={handleVote}
-                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-[2px] border border-paper-300 dark:border-night-border transition-colors cursor-pointer ${
-                  post.userVote === 1
-                    ? 'bg-terracotta/10 border-terracotta text-terracotta dark:text-terracotta-dark font-medium'
-                    : 'hover:bg-paper-200/60 dark:hover:bg-night-surface hover:text-ink-primary dark:hover:text-night-ink'
-                }`}
-              >
-                <ArrowBigUp className={`w-4 h-4 ${post.userVote === 1 ? 'fill-current' : ''}`} />
-                <span>{formatEchoes(post.votes)} 赞同 (Echoes)</span>
-              </button>
-
-              <button
-                onClick={handleBookmark}
-                className={`flex items-center gap-1.5 py-1.5 px-3 rounded-[2px] border border-paper-300 dark:border-night-border transition-colors cursor-pointer ${
-                  post.bookmarked
-                    ? 'bg-terracotta/10 border-terracotta text-terracotta dark:text-terracotta-dark font-medium'
-                    : 'hover:bg-paper-200/60 dark:hover:bg-night-surface hover:text-ink-primary dark:hover:text-night-ink'
-                }`}
-              >
-                <Bookmark className={`w-3.5 h-3.5 ${post.bookmarked ? 'fill-current' : ''}`} />
-                <span>{post.bookmarked ? '已收藏' : '收藏帖子'}</span>
-              </button>
-            </div>
-
-            <button
-              onClick={handleShare}
-              className="text-xs hover:text-ink-primary dark:hover:text-night-ink transition-colors cursor-pointer"
+      <article className="panel p-5 sm:p-8">
+        <header className="pb-5 hairline-b">
+          <h1 className="text-2xl sm:text-3xl font-extrabold leading-snug break-words">
+            {p.title}
+          </h1>
+          <div className="flex gap-3 flex-wrap items-center mt-5 text-sm text-ink-muted dark:text-night-muted">
+            <Link
+              className="flex items-center gap-2"
+              to={"/u/" + encodeURIComponent(p.author.username)}
             >
-              复制分享链接 ↗
-            </button>
+              <Avatar
+                src={p.author.avatar}
+                name={p.author.displayName || p.author.username}
+                size="sm"
+              />
+              {p.author.displayName || p.author.username}
+              <LevelBadge level={p.author.communityGrowth?.level} scope="community" />
+            </Link>
+            <time dateTime={p.timestamp}>{formatTimeAgo(p.timestamp)}</time>
+            {p.viewCount !== undefined && (
+              <span className="flex items-center gap-1">
+                <Eye size={16} />
+                {p.viewCount}
+              </span>
+            )}
           </div>
-
-          <CommentThread
-            postId={post.id}
-            comments={comments}
-            onCommentAdded={(newC) => setComments((prev) => [newC, ...prev])}
-            onCommentDeleted={(delId) => setComments((prev) => prev.filter((c) => c.id !== delId))}
-            onRequireAuth={onRequireAuth}
+        </header>
+        {p.image && (
+          <img
+            className="w-full max-h-[480px] object-contain rounded-md my-6 bg-paper-100 dark:bg-night-canvas"
+            src={
+              p.image.startsWith("/") || p.image.startsWith("http")
+                ? p.image
+                : "/" + p.image
+            }
+            alt={p.title}
           />
+        )}
+        <div className="py-4">
+          <MarkdownRenderer content={p.content} />
         </div>
-
-        <div className="lg:col-span-4 hidden lg:block sticky top-24">
-          <MarginaliaSidebar
-            comments={comments}
-            onScrollToDiscussion={() => {
-              const el = document.getElementById('responses');
-              el?.scrollIntoView({ behavior: 'smooth' });
-            }}
-          />
+        <div className="reading-mascot-slot">
+          <PageMascot pose="reading" />
         </div>
-      </div>
+        <div className="post-actions py-5 hairline-t">
+          <button
+            className={"post-action" + (p.userVote === 1 ? " selected" : "")}
+            aria-pressed={p.userVote === 1}
+            disabled={!!pending}
+            onClick={() => act("vote")}
+          >
+            <ThumbsUp size={20} />
+            {p.votes} 赞同
+          </button>
+          <button
+            className={"post-action" + (p.bookmarked ? " selected" : "")}
+            aria-pressed={!!p.bookmarked}
+            disabled={!!pending}
+            onClick={() => act("bookmark")}
+          >
+            <Bookmark size={20} />
+            {p.bookmarked ? "已收藏" : "收藏"}
+          </button>
+          <button className="post-action" onClick={share}>
+            <Share2 size={18} />
+            分享
+          </button>
+          {user?.username === p.author.username && (
+            <button
+              className="post-action ml-auto"
+              disabled={!!pending}
+              onClick={() => setDeleteTarget(p)}
+            >
+              <Trash2 size={18} />
+              删除
+            </button>
+          )}
+        </div>
+        <CommentThread
+          key={String(p.id) + ":" + (user?.id || "guest")}
+          postId={p.id}
+          onCountChange={delta => post.setData(previous => previous ? { ...previous, comments: Math.max(0, previous.comments + delta) } : previous)}
+          onRequireAuth={onRequireAuth}
+        />
+      </article>
+      <DeleteConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={deletePost}
+        kind="post"
+        preview={deleteTarget?.title}
+      />
     </div>
   );
 };

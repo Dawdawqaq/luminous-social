@@ -6,6 +6,9 @@ import java.time.LocalDateTime;
 
 @TableName("communities")
 public class Community {
+    private String category;
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
     private Long id;
     private Long ownerId;
     private String slug;

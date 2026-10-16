@@ -1,10 +1,12 @@
-import React from 'react';
+import React from "react";
 
 interface PasswordStrengthProps {
   password?: string;
 }
 
-export const PasswordStrength: React.FC<PasswordStrengthProps> = ({ password = '' }) => {
+export const PasswordStrength: React.FC<PasswordStrengthProps> = ({
+  password = "",
+}) => {
   const getStrength = (pwd: string) => {
     let score = 0;
     if (pwd.length >= 6) score += 1;
@@ -17,13 +19,13 @@ export const PasswordStrength: React.FC<PasswordStrengthProps> = ({ password = '
   const score = getStrength(password);
   if (!password) return null;
 
-  const labels = ['极弱', '弱', '适中', '安全', '非常坚固'];
+  const labels = ["极弱", "弱", "适中", "安全", "非常坚固"];
   const colors = [
-    'bg-terracotta',
-    'bg-terracotta',
-    'bg-ochre',
-    'bg-[#5B8266]',
-    'bg-[#5B8266]',
+    "bg-terracotta",
+    "bg-terracotta",
+    "bg-ochre",
+    "bg-[#5B8266]",
+    "bg-[#5B8266]",
   ];
 
   return (
@@ -33,7 +35,9 @@ export const PasswordStrength: React.FC<PasswordStrengthProps> = ({ password = '
           <div
             key={index}
             className={`h-full flex-1 rounded-full transition-all duration-300 ${
-              index < score ? colors[score] : 'bg-paper-300 dark:bg-night-border'
+              index < score
+                ? colors[score]
+                : "bg-paper-300 dark:bg-night-border"
             }`}
           />
         ))}

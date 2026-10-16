@@ -1,0 +1,190 @@
+# 小内存云服务器独立编排，前端和 HTTPS 由宿主机 Nginx 提供。
+name: luminous-cloud
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    mem_limit: 448m
+    mem_reservation: 192m
+    memswap_limit: 768m
+    logging: *logging
+    environment:
+      MYSQL_DATABASE: luminous
+      MYSQL_USER: luminous
+      MYSQL_PASSWORD: ${DB_PASSWORD:?请先初始化云环境密钥}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?请先初始化云环境密钥}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --innodb-buffer-pool-size=128M
+      - --innodb-redo-log-capacity=64M
+      - --max-connections=30
+      - --table-open-cache=256
+      - --performance-schema=OFF
+      - --tmp-table-size=16M
+      - --max-heap-table-size=16M
+      - --binlog-expire-logs-seconds=86400
+      - --max-binlog-size=64M
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h 127.0.0.1 -u luminous -D luminous -Nse 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      start_period: 90s
+      retries: 18
+    networks:
+      - app-net
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    mem_limit: 96m
+    mem_reservation: 32m
+    memswap_limit: 96m
+    logging: *logging
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请先初始化云环境密钥}
+    command:
+      - sh
+      - -c
+      - 'exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD" --maxmemory 48mb --maxmemory-policy noeviction'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -qx PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks:
+      - app-net
+
+  namesrv:
+    image: apache/rocketmq:5.3.1
+    restart: unless-stopped
+    mem_limit: 160m
+    mem_reservation: 64m
+    memswap_limit: 256m
+    logging: *logging
+    environment:
+      # 同时覆盖镜像默认年轻代和直接内存，避免只调堆上限仍无法启动。
+      JAVA_OPT_EXT: "-Djava.net.preferIPv4Stack=true -Xms32m -Xmx64m -Xmn16m -Xss512k -XX:MaxDirectMemorySize=16m -XX:-AlwaysPreTouch"
+    command: ["sh", "mqnamesrv"]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9876"]
+      interval: 10s
+      timeout: 3s
+      retries: 18
+      start_period: 30s
+    networks:
+      - app-net
+
+  broker:
+    image: apache/rocketmq:5.3.1
+    restart: unless-stopped
+    mem_limit: 448m
+    mem_reservation: 256m
+    memswap_limit: 768m
+    stop_grace_period: 60s
+    logging: *logging
+    environment:
+      NAMESRV_ADDR: namesrv:9876
+      JAVA_OPT_EXT: "-Djava.net.preferIPv4Stack=true -Xms128m -Xmx256m -Xmn64m -Xss512k -XX:MaxDirectMemorySize=64m -XX:G1HeapRegionSize=1m -XX:-AlwaysPreTouch"
+    command: ["sh", "mqbroker", "-n", "namesrv:9876", "-c", "/home/rocketmq/cloud-broker.conf"]
+    depends_on:
+      namesrv:
+        condition: service_healthy
+    volumes:
+      - ./broker.conf:/home/rocketmq/cloud-broker.conf:ro
+      - broker_store:/home/rocketmq/store
+      - broker_logs:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/10911"]
+      interval: 10s
+      timeout: 3s
+      retries: 18
+      start_period: 45s
+    networks:
+      app-net:
+        ipv4_address: 172.29.79.20
+
+  backend:
+    image: luminous-cloud-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    memswap_limit: 768m
+    stop_grace_period: 45s
+    logging: *logging
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "8080"
+      SERVER_TOMCAT_THREADS_MAX: "30"
+      SERVER_TOMCAT_THREADS_MIN_SPARE: "4"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "8"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "2"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: luminous
+      DB_USER: luminous
+      DB_PASSWORD: ${DB_PASSWORD:?请先初始化云环境密钥}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_USERNAME: ""
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请先初始化云环境密钥}
+      ROCKETMQ_ENABLED: "true"
+      ROCKETMQ_NAMESRV: namesrv:9876
+      STORAGE_TYPE: local
+      UPLOAD_DIR: /app/uploads
+      APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-https://myluminous.xyz}
+      MINIO_PUBLIC_ENDPOINT: ${APP_PUBLIC_BASE_URL:-https://myluminous.xyz}
+      CORS_ALLOWED_ORIGINS: ${APP_PUBLIC_BASE_URL:-https://myluminous.xyz}
+      SECURE_COOKIES: "true"
+      # 宿主机经回环发布端口转发时，容器看到的来源是此桥接网关。
+      TRUSTED_PROXIES: "172.29.79.1/32,127.0.0.1/32"
+      JWT_SECRET: ${JWT_SECRET:?请先初始化云环境密钥}
+      SNOWFLAKE_WORKER_ID: "1"
+      SNOWFLAKE_DATACENTER_ID: "1"
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_DISPLAY_NAME: 管理员
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx256m -Xss512k -XX:MaxDirectMemorySize=64m -XX:+UseG1GC -XX:ActiveProcessorCount=2 -Duser.timezone=Asia/Shanghai"
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.79.0/24
+          gateway: 172.29.79.1
+
+volumes:
+  mysql_data:
+  redis_data:
+  broker_store:
+  broker_logs:
+  uploads_data:

@@ -1,419 +1,549 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
-import { Post, Community } from '../types';
-import { postApi, communityApi, feedApi } from '../api/client';
-import { PostCard } from '../components/post/PostCard';
-import { FeaturedHero } from '../components/post/FeaturedHero';
-import { Button } from '../components/ui/Button';
-import { Avatar } from '../components/ui/Avatar';
-import { useAuth } from '../context/AuthContext';
-import { Flame, Clock, Sparkles, Plus, ChevronRight, PenTool, Image, Loader2, Users } from 'lucide-react';
-
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import {
+  Compass,
+  Pencil,
+  Image,
+  Users,
+  Heart,
+  ShieldCheck,
+  MessageCircle,
+  ArrowRight,
+  RefreshCw,
+} from "lucide-react";
+import { Post } from "../types";
+import { ApiError, feedApi, postApi } from "../api/client";
+import { useAuth } from "../context/AuthContext";
+import { useFollowActions } from "../context/FollowContext";
+import { useCommunities } from "../context/CommunityContext";
+import { Avatar } from "../components/ui/Avatar";
+import { PostCard } from "../components/post/PostCard";
+import { ContentState } from "../components/common/ContentState";
 interface HomePageProps {
   onRequireAuth: () => void;
   onOpenCreateSalon: () => void;
   onOpenCreatePost: () => void;
 }
-
-interface CachedFeed {
+interface FeedState {
   posts: Post[];
-  salons: Community[];
-  featuredPost: Post | null;
   page: number;
   hasNext: boolean;
-  filter: string;
-  community: string;
+  score?: number;
+  offset: number;
+  cursor?: string;
 }
-
-let feedCache: CachedFeed | null = null;
-
+const emptyFeed: FeedState = { posts: [], page: 1, hasNext: false, offset: 0 };
+const welcomeCatImage = "/illustrations/cats/luminous-cat-welcome-v2.png";
 export const HomePage: React.FC<HomePageProps> = ({
   onRequireAuth,
   onOpenCreateSalon,
   onOpenCreatePost,
 }) => {
-  const { user, isAuthenticated } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const filter = searchParams.get('filter') || 'hot';
-  const selectedCommunity = searchParams.get('community') || '';
-
-  const hasMatchingCache =
-    feedCache &&
-    feedCache.filter === filter &&
-    feedCache.community === selectedCommunity;
-
-  const [posts, setPosts] = useState<Post[]>(() => hasMatchingCache ? feedCache!.posts : []);
-  const [salons, setSalons] = useState<Community[]>(() => hasMatchingCache ? feedCache!.salons : []);
-  const [featuredPost, setFeaturedPost] = useState<Post | null>(() => hasMatchingCache ? feedCache!.featuredPost : null);
-  const [isLoading, setIsLoading] = useState(() => !hasMatchingCache);
-  const [page, setPage] = useState(() => hasMatchingCache ? feedCache!.page : 1);
-  const [hasNext, setHasNext] = useState(() => hasMatchingCache ? feedCache!.hasNext : false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-
-  const [feedScore, setFeedScore] = useState<number | undefined>(undefined);
-  const [feedOffset, setFeedOffset] = useState(0);
-
-  const fetchInitialData = useCallback(async () => {
-    try {
-      if (!feedCache || feedCache.filter !== filter || feedCache.community !== selectedCommunity) {
-        setIsLoading(true);
-      }
-
-      if (filter === 'feed') {
-        if (!isAuthenticated) {
-          setPosts([]);
-          setIsLoading(false);
-          return;
-        }
-        const [feedRes, salonsRes] = await Promise.allSettled([
-          feedApi.getFeed({ size: 10 }),
-          communityApi.list(),
-        ]);
-
-        let loadedPosts: Post[] = [];
-        let loadedSalons: Community[] = [];
-        let nextHasNext = false;
-
-        if (feedRes.status === 'fulfilled') {
-          loadedPosts = feedRes.value.items || [];
-          nextHasNext = feedRes.value.hasMore;
-          setFeedScore(feedRes.value.minScore);
-          setFeedOffset(feedRes.value.offset);
-        }
-
-        if (salonsRes.status === 'fulfilled') {
-          loadedSalons = salonsRes.value || [];
-        }
-
-        setPosts(loadedPosts);
-        setSalons(loadedSalons);
-        setFeaturedPost(null);
-        setHasNext(nextHasNext);
-        setPage(1);
-        return;
-      }
-
-      const [postsRes, salonsRes] = await Promise.allSettled([
-        postApi.list({ filter, community: selectedCommunity || undefined, page: 1, size: 10 }),
-        communityApi.list(),
-      ]);
-
-      let loadedPosts: Post[] = [];
-      let loadedSalons: Community[] = [];
-      let nextHasNext = false;
-      let loadedFeatured: Post | null = null;
-
-      if (postsRes.status === 'fulfilled') {
-        loadedPosts = postsRes.value.items || [];
-        nextHasNext = postsRes.value.hasNext;
-        if (loadedPosts.length > 0 && !selectedCommunity && filter === 'hot') {
-          loadedFeatured = loadedPosts[0];
-        }
-      }
-
-      if (salonsRes.status === 'fulfilled') {
-        loadedSalons = salonsRes.value || [];
-      }
-
-      setPosts(loadedPosts);
-      setSalons(loadedSalons);
-      setFeaturedPost(loadedFeatured);
-      setHasNext(nextHasNext);
-      setPage(1);
-
-      feedCache = {
-        posts: loadedPosts,
-        salons: loadedSalons,
-        featuredPost: loadedFeatured,
-        page: 1,
-        hasNext: nextHasNext,
-        filter,
-        community: selectedCommunity,
-      };
-    } catch {
-      if (!feedCache) {
-        setPosts([]);
-        setSalons([]);
-        setFeaturedPost(null);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filter, selectedCommunity, isAuthenticated]);
-
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { revision: followRevision } = useFollowActions();
+  const {
+    communities,
+    isLoading: communitiesLoading,
+    error: communitiesError,
+    refresh: refreshCommunities,
+  } = useCommunities();
+  const [params, setParams] = useSearchParams();
+  const rawFilter = params.get("filter") || "hot";
+  const filter = ["hot", "new", "feed", "top"].includes(rawFilter)
+    ? rawFilter
+    : "hot";
+  const community = params.get("community") || "";
+  const period = filter === "top" && params.get("period") === "week" ? "week" : "day";
+  const [feed, setFeed] = useState<FeedState>(emptyFeed);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+  const [moreError, setMoreError] = useState("");
+  const [rankingExpired, setRankingExpired] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const generation = useRef(0);
+  const morePending = useRef(false);
   useEffect(() => {
-    fetchInitialData();
-  }, [fetchInitialData]);
-
-  const handleLoadMore = async () => {
-    if (isLoadingMore || !hasNext) return;
-    try {
-      setIsLoadingMore(true);
-      if (filter === 'feed') {
-        const res = await feedApi.getFeed({
-          lastScore: feedScore,
-          offset: feedOffset,
-          size: 10,
-        });
-        if (res.items && res.items.length > 0) {
-          setPosts(prev => [...prev, ...res.items]);
-          setHasNext(res.hasMore);
-          setFeedScore(res.minScore);
-          setFeedOffset(res.offset);
-        }
-        return;
-      }
-
-      const nextPage = page + 1;
-      const res = await postApi.list({
-        filter,
-        community: selectedCommunity || undefined,
-        page: nextPage,
-        size: 10,
-      });
-
-      if (res.items && res.items.length > 0) {
-        const merged = [...posts, ...res.items];
-        setPosts(merged);
-        setHasNext(res.hasNext);
-        setPage(nextPage);
-        if (feedCache) {
-          feedCache.posts = merged;
-          feedCache.page = nextPage;
-          feedCache.hasNext = res.hasNext;
-        }
-      }
-    } catch {
-    } finally {
-      setIsLoadingMore(false);
-    }
-  };
-
-  const handleFilterChange = (newFilter: string) => {
-    if (newFilter === 'feed' && !isAuthenticated) {
-      onRequireAuth();
+    const requestId = ++generation.current;
+    setFeed(emptyFeed);
+    setError("");
+    setMoreError("");
+    setRankingExpired(false);
+    setLoadingMore(false);
+    morePending.current = false;
+    if (authLoading) {
+      setLoading(true);
       return;
     }
-    const params = new URLSearchParams(searchParams);
-    params.set('filter', newFilter);
-    setSearchParams(params);
+    if (filter === "feed" && !isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const fetch = async () => {
+      try {
+        let next: FeedState;
+        if (filter === "feed") {
+          const res = await feedApi.getFeed({ size: 10 });
+          next = {
+            posts: res.items || [],
+            page: 1,
+            hasNext: res.hasMore && res.items.length > 0,
+            score: res.minScore,
+            offset: res.offset,
+          };
+        } else if (filter === "new") {
+          const res = await postApi.list({
+            filter,
+            community: community || undefined,
+            page: 1,
+            size: 10,
+          });
+          next = {
+            posts: res.items || [],
+            page: 1,
+            hasNext: res.hasNext && res.items.length > 0,
+            offset: 0,
+          };
+        } else {
+          const res = await postApi.ranking({ type: filter === "top" ? "hot" : "recommend", period,
+            community: community || undefined, size: 10 });
+          next = { posts: res.items, page: 1, hasNext: res.hasMore, cursor: res.nextCursor || undefined, offset: 0 };
+        }
+        if (requestId === generation.current) setFeed(next);
+      } catch (err) {
+        if (requestId === generation.current)
+          setError(err instanceof Error ? err.message : "帖子加载失败");
+      } finally {
+        if (requestId === generation.current) setLoading(false);
+      }
+    };
+    void fetch();
+    return () => {
+      ++generation.current;
+    };
+  }, [filter, period, community, user?.id, isAuthenticated, authLoading, revision, filter === "feed" ? followRevision : 0]);
+  const loadMore = useCallback(async () => {
+    if (morePending.current || !feed.hasNext) return;
+    const requestId = generation.current;
+    morePending.current = true;
+    setLoadingMore(true);
+    setMoreError("");
+    try {
+      const response =
+        filter === "feed"
+          ? await feedApi.getFeed({
+              size: 10,
+              lastScore: feed.score,
+              offset: feed.offset,
+            })
+          : filter === "hot" || filter === "top"
+          ? await postApi.ranking({ type: filter === "top" ? "hot" : "recommend", period,
+              community: community || undefined, cursor: feed.cursor, size: 10 })
+          : await postApi.list({
+              filter,
+              community: community || undefined,
+              page: feed.page + 1,
+              size: 10,
+            });
+      if (requestId !== generation.current) return;
+      const items = response.items || [];
+      const hasNext =
+        "hasMore" in response ? response.hasMore : response.hasNext;
+      setFeed((previous) => {
+        const seen = new Set(previous.posts.map((p) => p.id));
+        const fresh = items.filter((p) => !seen.has(p.id));
+        return {
+          posts: [...previous.posts, ...fresh],
+          page: previous.page + 1,
+          hasNext: hasNext && items.length > 0,
+          score: "minScore" in response ? response.minScore : previous.score,
+          offset: "offset" in response ? response.offset : 0,
+          cursor: "nextCursor" in response ? response.nextCursor || undefined : undefined,
+        };
+      });
+    } catch (err) {
+      if (requestId === generation.current) {
+        setMoreError(err instanceof Error ? err.message : "更多帖子加载失败");
+        if (err instanceof ApiError && err.code === "RANKING_SNAPSHOT_EXPIRED") setRankingExpired(true);
+      }
+    } finally {
+      if (requestId === generation.current) {
+        morePending.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }, [feed, filter, period, community]);
+  const joined = communities.filter((c) => c.joined);
+  const suggestions = communities.filter((c) => !c.joined).slice(0, 3);
+  const changeFilter = (value: string) => {
+    const next = new URLSearchParams(params);
+    next.set("filter", value);
+    setParams(next);
   };
-
-  const filters = [
-    { key: 'hot', label: '热门讨论', icon: Flame },
-    { key: 'new', label: '最新发布', icon: Clock },
-    { key: 'feed', label: '关注动态', icon: Users },
-    { key: 'top', label: '深度精华', icon: Sparkles },
-  ];
-
   return (
-    <div className="space-y-6 md:space-y-8">
-      {featuredPost && <FeaturedHero post={featuredPost} />}
-
-      {salons.length > 0 && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none text-xs font-sans">
-          <span className="text-[11px] uppercase tracking-wider text-ink-subtle dark:text-night-subtle shrink-0">
-            活跃社区:
-          </span>
-          <Link
-            to="/"
-            className={`px-3 py-1.5 rounded-[2px] transition-colors shrink-0 ${
-              !selectedCommunity
-                ? 'bg-ink-primary text-paper-50 dark:bg-night-ink dark:text-night-canvas font-medium'
-                : 'bg-paper-200/70 dark:bg-night-surface text-ink-muted hover:text-ink-primary dark:text-night-muted'
-            }`}
+    <div className="home-grid">
+      <div className="home-main">
+        <section className="panel welcome-panel" aria-label="欢迎来到 Luminous">
+          <div className="welcome-backdrop" aria-hidden="true" />
+          <div className="welcome-copy">
+            <h1>
+              找到同好，
+              <br />
+              聊点<span>喜欢的。</span>
+            </h1>
+            <p>分享你的日常、问题和新发现。</p>
+            <div className="welcome-actions">
+              <button className="ink-button primary" onClick={onOpenCreatePost}>
+                <Pencil size={18} />
+                分享新发现
+              </button>
+              <Link to="/salons" className="ink-button">
+                <Compass size={18} />
+                发现社区
+              </Link>
+            </div>
+          </div>
+          <div className="welcome-note" aria-hidden="true">
+            在这里
+            <br />
+            遇见同样热爱的你！
+          </div>
+          <img
+            className="welcome-mascot welcome-cat-body"
+            src={welcomeCatImage}
+            alt="白猫从框内探头，一只爪子搭住下边框，另一只带双色星星的爪子伸出右边框"
+            width="1774"
+            height="887"
+            fetchPriority="high"
+          />
+          <span className="welcome-frame-edge" aria-hidden="true" />
+          <img
+            className="welcome-mascot welcome-cat-paw"
+            src={welcomeCatImage}
+            alt=""
+            aria-hidden="true"
+            width="1774"
+            height="887"
+            fetchPriority="high"
+          />
+          <img
+            className="welcome-mascot welcome-cat-reach"
+            src={welcomeCatImage}
+            alt=""
+            aria-hidden="true"
+            width="1774"
+            height="887"
+            fetchPriority="high"
+          />
+        </section>
+        <div className="panel composer">
+          <Avatar
+            src={user?.avatar}
+            name={user?.displayName || "L"}
+            size="md"
+          />
+          <button className="composer-prompt" onClick={onOpenCreatePost}>
+            今天有什么想分享？
+          </button>
+          <button
+            className="composer-image icon-button"
+            aria-label="发帖并添加图片"
+            onClick={onOpenCreatePost}
           >
-            全部讨论
-          </Link>
-          {salons.map((s) => (
-            <Link
-              key={s.id || s.name}
-              to={`/?community=${s.name}`}
-              className={`px-3 py-1.5 rounded-[2px] border border-paper-300 dark:border-night-border transition-colors shrink-0 ${
-                selectedCommunity.toLowerCase() === s.name.toLowerCase()
-                  ? 'bg-ink-primary text-paper-50 dark:bg-night-ink dark:text-night-canvas font-medium'
-                  : 'bg-paper-50 dark:bg-night-surface hover:bg-paper-200/60 dark:hover:bg-night-surfaceHover text-ink-muted dark:text-night-muted'
-              }`}
-            >
-              c/{s.name}
-            </Link>
-          ))}
-          <Link
-            to="/salons"
-            className="px-2.5 py-1.5 text-terracotta dark:text-terracotta-dark hover:underline shrink-0 flex items-center gap-1 font-medium"
+            <Image size={22} />
+          </button>
+          <button
+            className="ink-button primary small"
+            onClick={onOpenCreatePost}
           >
-            <span>更多社区</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </Link>
+            发布
+          </button>
         </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
-        <section className="lg:col-span-8 space-y-4">
-          <div
-            onClick={() => {
-              if (!isAuthenticated) onRequireAuth();
-              else onOpenCreatePost();
-            }}
-            className="p-3.5 sm:p-4 bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] shadow-tactile flex items-center gap-3 cursor-pointer hover:border-ink-primary/40 dark:hover:border-night-ink/40 transition-colors"
-          >
-            <Avatar src={user?.avatar} name={user?.displayName || user?.username || 'G'} size="sm" />
-            <div className="flex-1 text-xs text-ink-subtle dark:text-night-subtle font-sans">
-              有什么新的思考、问题或发现？点击发帖...
-            </div>
-            <div className="flex items-center gap-3 text-xs font-sans text-ink-muted dark:text-night-muted">
-              <span className="hidden sm:inline-flex items-center gap-1 hover:text-ink-primary">
-                <PenTool className="w-3.5 h-3.5 text-terracotta" /> 发长文
-              </span>
-              <span className="hidden sm:inline-flex items-center gap-1 hover:text-ink-primary">
-                <Image className="w-3.5 h-3.5 text-terracotta" /> 带图讨论
-              </span>
-            </div>
+        <section className="panel feed-panel" aria-label="帖子列表">
+          <div role="tablist" aria-label="帖子排序" className="feed-tabs">
+            {[
+              { key: "hot", label: "推荐" },
+              { key: "new", label: "最新" },
+              { key: "feed", label: "关注" },
+              { key: "top", label: "热榜" },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                role="tab"
+                aria-selected={filter === tab.key}
+                className="feed-tab"
+                onClick={() => changeFilter(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-
-          <div className="flex items-center justify-between py-2 hairline-b">
-            <div className="flex items-center gap-4">
-              {filters.map((f) => {
-                const Icon = f.icon;
-                const isActive = filter === f.key;
-                return (
-                  <button
-                    key={f.key}
-                    onClick={() => handleFilterChange(f.key)}
-                    className={`flex items-center gap-1.5 text-xs font-sans py-1 transition-colors cursor-pointer ${
-                      isActive
-                        ? 'text-ink-primary dark:text-night-ink font-semibold border-b border-terracotta'
-                        : 'text-ink-muted hover:text-ink-primary dark:text-night-muted dark:hover:text-night-ink'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    <span>{f.label}</span>
-                  </button>
-                );
-              })}
+          {(filter === "hot" || filter === "top") && <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 hairline-b">
+            {filter === "top" ? <div className="flex flex-wrap items-center gap-3">
+              <div role="group" aria-label="热榜时间范围" className="flex gap-1">
+                {([['day', '日榜'], ['week', '周榜']] as const).map(([value, label]) => <button
+                  key={value} type="button" aria-pressed={period === value}
+                  className={`min-h-9 rounded-md px-3 text-sm font-semibold ${period === value ? "bg-terracotta text-white" : "hover:bg-paper-100 dark:hover:bg-night-surfaceHover"}`}
+                  onClick={() => { const next = new URLSearchParams(params); next.set('period', value); setParams(next); }}>{label}</button>)}
+              </div>
+              <p className="text-xs text-ink-muted dark:text-night-muted">{period === "day" ? "近 24 小时发布" : "近 7 天发布"}</p>
+            </div> : <p className="text-sm text-ink-muted dark:text-night-muted">近期好内容，也给新帖子一点机会。</p>}
+            <button type="button" aria-label={filter === "top" ? "刷新热榜" : "刷新推荐"}
+              disabled={loading || loadingMore} onClick={() => setRevision(value => value + 1)}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md px-2 text-sm text-terracotta hover:bg-paper-100 disabled:opacity-50 dark:text-terracotta-dark dark:hover:bg-night-surfaceHover">
+              <RefreshCw size={15} aria-hidden="true" />刷新
+            </button>
+          </div>}
+          {community && (
+            <div className="px-5 py-3 text-sm hairline-b flex justify-between gap-3">
+              <span className="min-w-0 break-words">
+                正在浏览：
+                {communities.find((c) => c.name === community)?.displayName ||
+                  community}
+              </span>
+              <button
+                className="shrink-0 self-start whitespace-nowrap text-terracotta dark:text-terracotta-dark"
+                onClick={() => {
+                  const next = new URLSearchParams(params);
+                  next.delete("community");
+                  setParams(next);
+                }}
+              >
+                查看全部
+              </button>
             </div>
-
-            <span className="text-[11px] text-ink-subtle dark:text-night-subtle font-sans">
-              共 {posts.length} 条讨论
-            </span>
-          </div>
-
-          {filter !== 'feed' && <p className="mb-3 text-xs text-ink-subtle dark:text-night-subtle">
-            当前筛选最多展示 500 篇，可按社区或搜索缩小范围。
-          </p>}
-          {isLoading ? (
-            <div className="py-24 text-center space-y-3">
-              <Loader2 className="w-6 h-6 animate-spin mx-auto text-ink-subtle" />
-              <p className="font-serif italic text-sm text-ink-muted dark:text-night-muted">
-                正在载入社区讨论...
-              </p>
-            </div>
-          ) : posts.length === 0 ? (
-            <div className="py-20 text-center space-y-4 bg-paper-50/50 dark:bg-night-surface/20 border border-paper-300/60 dark:border-night-border/60 rounded-[2px]">
-              <p className="font-serif italic text-base text-ink-muted dark:text-night-muted">
-                当前筛选下暂无帖子。
-              </p>
-              <Button size="sm" onClick={onOpenCreatePost}>
-                发布第一条帖子
-              </Button>
-            </div>
-          ) : (
-            <div className="divide-y divide-paper-300 dark:divide-night-border">
-              {posts.map((post) => (
+          )}
+          <div className="feed-body" aria-busy={loading}>
+            {loading ? (
+              <div role="status" aria-label="正在加载帖子">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="loading-lines">
+                    <div className="loading-line w-1/3" />
+                    <div className="loading-line w-4/5" />
+                    <div className="loading-line w-3/5" />
+                  </div>
+                ))}
+              </div>
+            ) : error ? (
+              <ContentState
+                title="帖子暂时加载失败"
+                description={error}
+                onRetry={() => setRevision((r) => r + 1)}
+              />
+            ) : filter === "feed" && !isAuthenticated ? (
+              <ContentState
+                title="登录后查看关注动态"
+                description="关注喜欢的人，他们的新帖子会出现在这里。"
+              >
+                <button
+                  className="ink-button primary small"
+                  onClick={onRequireAuth}
+                >
+                  登录
+                </button>
+              </ContentState>
+            ) : feed.posts.length ? (
+              feed.posts.map((post) => (
                 <PostCard
                   key={post.id}
                   post={post}
                   onRequireAuth={onRequireAuth}
-                  onVoteChange={(updated) => {
-                    setPosts((prev) =>
-                      prev.map((p) => (p.id === updated.id ? updated : p))
-                    );
-                  }}
+                  onVoteChange={(updated) =>
+                    setFeed((previous) => ({
+                      ...previous,
+                      posts: previous.posts.map((p) =>
+                        p.id === updated.id ? updated : p,
+                      ),
+                    }))
+                  }
                 />
-              ))}
-            </div>
-          )}
-
-          {hasNext && !isLoading && (
-            <div className="pt-6 text-center">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleLoadMore}
-                isLoading={isLoadingMore}
+              ))
+            ) : (
+              <ContentState
+                title={
+                  filter === "feed" ? "关注动态还没有新内容" : filter === "top" ? "暂时没有上榜帖子" : "这里还没有帖子"
+                }
+                description={
+                  filter === "feed"
+                    ? "去看看社区，找到想关注的人。"
+                    : filter === "top" ? `最近${period === "day" ? "24 小时" : "7 天"}发布的帖子有更多互动后，会出现在这里。`
+                    : "分享一个问题或新发现，开启第一段讨论。"
+                }
               >
-                加载更多帖子
-              </Button>
-            </div>
+                <button
+                  className="ink-button primary small"
+                  onClick={
+                    filter === "feed"
+                      ? () => setParams({ filter: "hot" })
+                      : filter === "top" ? () => changeFilter("new")
+                      : onOpenCreatePost
+                  }
+                >
+                  {filter === "feed" ? "看看推荐" : filter === "top" ? "看看最新" : "发布第一篇帖子"}
+                </button>
+              </ContentState>
+            )}
+            {moreError && (
+              <p role="alert" className="py-3 text-sm text-red-600">
+                {moreError}
+              </p>
+            )}
+            {rankingExpired && <div className="py-3 text-center"><button className="ink-button small" onClick={() => setRevision(value => value + 1)}>刷新列表</button></div>}
+            {feed.hasNext && !loading && !error && !rankingExpired && (
+              <div className="py-5 text-center">
+                <button
+                  className="ink-button small"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                >
+                  {loadingMore
+                    ? "正在加载…"
+                    : moreError
+                      ? "重试加载"
+                      : "加载更多"}
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+      <aside className="home-aside" aria-label="社区与个人信息">
+        <section className="panel aside-panel">
+          <h2 className="aside-heading">
+            <span>
+              <Users size={23} />
+              {isAuthenticated ? "我的社区生活" : "一起聊点喜欢的"}
+            </span>
+          </h2>
+          {isAuthenticated && user ? (
+            <>
+              <Link
+                to={"/u/" + encodeURIComponent(user.username)}
+                className="account-name"
+              >
+                <Avatar
+                  src={user.avatar}
+                  name={user.displayName || user.username}
+                  size="lg"
+                />
+                {user.displayName || user.username}
+              </Link>
+              <div className="account-stats">
+                <div>
+                  <strong>{user.stats?.posts ?? 0}</strong>
+                  <span>帖子</span>
+                </div>
+                <div>
+                  <strong>{user.stats?.followers ?? 0}</strong>
+                  <span>关注者</span>
+                </div>
+                <div>
+                  <strong>{joined.length}</strong>
+                  <span>已加入</span>
+                </div>
+              </div>
+              <Link
+                className="ink-button yellow small w-full"
+                to={
+                  joined.length
+                    ? "/s/" +
+                      encodeURIComponent(joined[0].name.replace(/^c\//, ""))
+                    : "/salons"
+                }
+              >
+                {joined.length ? "去我的社区看看" : "找到喜欢的社区"}
+                <ArrowRight size={16} />
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-ink-muted dark:text-night-muted mb-5">
+                分享你的发现，收藏喜欢的内容，遇见聊得来的朋友。
+              </p>
+              <button
+                className="ink-button yellow small w-full"
+                onClick={onRequireAuth}
+              >
+                登录参与社区
+              </button>
+            </>
           )}
         </section>
-
-        <aside className="lg:col-span-4 space-y-6 hidden lg:block">
-          <div className="p-5 bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] shadow-tactile space-y-3">
-            <h3 className="font-serif text-base font-medium text-ink-primary dark:text-night-ink">
-              关于 Luminous 社区
-            </h3>
-            <p className="font-serif italic text-xs text-ink-muted dark:text-night-muted leading-relaxed">
-              这里是一处安静交流思想、作品与观点的现代数字社区。提倡认真推敲的表达，拒绝无效的灌水与多巴胺操纵。
-            </p>
-            <div className="pt-2 hairline-t flex items-center justify-between text-xs font-sans">
-              <button
-                onClick={onOpenCreateSalon}
-                className="text-terracotta dark:text-terracotta-dark hover:underline font-medium cursor-pointer"
-              >
-                + 申请创建新社区
-              </button>
-            </div>
-          </div>
-
-          {salons.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs font-sans text-ink-muted dark:text-night-muted pb-1 hairline-b">
-                <span className="font-semibold uppercase tracking-wider text-[11px]">
-                  活跃社区
-                </span>
-                <Link to="/salons" className="hover:text-ink-primary dark:hover:text-night-ink">
-                  查看全部 ↗
+        <section className="panel aside-panel">
+          <h2 className="aside-heading">
+            <span>
+              <Compass size={23} />
+              发现更多社区
+            </span>
+            <Link to="/salons">全部</Link>
+          </h2>
+          {communitiesLoading ? (
+            <p className="text-sm text-ink-muted">正在加载…</p>
+          ) : communitiesError ? (
+            <button
+              className="text-sm text-terracotta"
+              onClick={refreshCommunities}
+            >
+              社区加载失败，重试
+            </button>
+          ) : suggestions.length ? (
+            suggestions.map((c) => (
+              <div className="aside-community" key={c.id || c.name}>
+                <Avatar src={c.icon} name={c.displayName || c.name} size="md" />
+                <Link
+                  className="aside-community-text"
+                  to={"/s/" + encodeURIComponent(c.name.replace(/^c\//, ""))}
+                >
+                  <strong>{c.displayName || c.name}</strong>
+                  <p>{c.description}</p>
+                </Link>
+                <Link
+                  to={"/s/" + encodeURIComponent(c.name.replace(/^c\//, ""))}
+                >
+                  看看
                 </Link>
               </div>
-
-              <div className="space-y-2">
-                {salons.slice(0, 5).map((s) => (
-                  <Link
-                    key={s.id || s.name}
-                    to={`/s/${s.name}`}
-                    className="p-3 bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border rounded-[2px] hover:border-ink-primary/40 dark:hover:border-night-ink/40 transition-colors flex items-center justify-between group"
-                  >
-                    <div className="flex items-center gap-2.5 truncate">
-                      <Avatar src={s.icon} name={s.displayName || s.name} size="sm" />
-                      <div className="truncate">
-                        <p className="font-serif text-xs font-medium text-ink-primary dark:text-night-ink group-hover:text-terracotta transition-colors">
-                          c/{s.name}
-                        </p>
-                        <p className="text-[11px] text-ink-subtle dark:text-night-subtle truncate">
-                          {s.membersCount} 位成员
-                        </p>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-ink-subtle shrink-0" />
-                  </Link>
-                ))}
-              </div>
-            </div>
+            ))
+          ) : (
+            <>
+              <p className="text-sm text-ink-muted dark:text-night-muted mb-4">
+                {communities.length
+                  ? "你已加入这里的所有社区。"
+                  : "还没有社区，创建一个感兴趣的主题吧。"}
+              </p>
+              <button
+                className="ink-button small w-full"
+                onClick={onOpenCreateSalon}
+              >
+                创建社区
+              </button>
+            </>
           )}
-
-          <div className="p-4 bg-paper-200/50 dark:bg-night-canvas/50 border border-paper-300/60 dark:border-night-border/60 rounded-[2px] text-xs font-sans text-ink-muted dark:text-night-muted space-y-2">
-            <h4 className="font-semibold text-ink-primary dark:text-night-ink uppercase text-[11px]">
-              社区交流准则
-            </h4>
-            <ul className="space-y-1 text-[11px] text-ink-subtle dark:text-night-subtle">
-              <li>1. 善意包容，基于事实与论点交流</li>
-              <li>2. 鼓励长篇手记与成体系的见解</li>
-              <li>3. 尊重每一位创作者的知识产权</li>
-            </ul>
-          </div>
-        </aside>
-      </div>
+        </section>
+        <section className="panel aside-panel">
+          <h2 className="aside-heading">
+            <span>
+              <ShieldCheck size={23} />
+              聊得开心，互相尊重
+            </span>
+          </h2>
+          <ul className="guidelines">
+            <li>
+              <MessageCircle size={17} />
+              友善交流，允许不同的观点。
+            </li>
+            <li>
+              <Users size={17} />
+              不发布攻击、歧视或引战内容。
+            </li>
+            <li>
+              <Heart size={17} />
+              分享有价值的内容，一起维护社区氛围。
+            </li>
+          </ul>
+        </section>
+      </aside>
     </div>
   );
 };

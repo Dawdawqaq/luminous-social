@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luminous.api.cache.RedisLuaScriptService;
 import com.luminous.api.mq.*;
 import com.luminous.api.notification.NotificationEvent;
-import com.luminous.api.notification.NotificationMapper;
+import com.luminous.api.notification.NotificationInboxRepository;
 import com.luminous.api.notification.Notification;
 import com.luminous.api.post.PostMapper;
 import com.luminous.api.vote.*;
@@ -38,7 +38,7 @@ class ReliableInteractionIntegrationTest extends AbstractVoteIntegrationTest {
     @Autowired private NotificationTransactionService notificationTransactions;
     @Autowired private ObjectMapper mapper;
     @MockitoSpyBean private PostMapper posts;
-    @MockitoSpyBean private NotificationMapper notificationMapper;
+    @MockitoSpyBean private NotificationInboxRepository notificationInbox;
     @MockitoSpyBean private ReliableEventRepository events;
     @MockitoSpyBean private RedisLuaScriptService scripts;
 
@@ -180,10 +180,10 @@ class ReliableInteractionIntegrationTest extends AbstractVoteIntegrationTest {
     @Test void notificationInsertFailure_RollsBackConsumptionAndDebounce_ThenRedeliveryCompletes() throws Exception {
         long postId=createPost(true);
         NotificationEvent event=new NotificationEvent(voter.id(),author.id(),"LIKE_POST","POST",postId,"[E2E_TEST] 通知");
-        doThrow(new IllegalStateException("[E2E_TEST] 插入失败")).when(notificationMapper).insert(any(Notification.class));
+        doThrow(new IllegalStateException("[E2E_TEST] 插入失败")).when(notificationInbox).insertBatch(anyList());
         assertThat(notificationConsumer.consumeMessage(List.of(notificationMessage(event,0)),null)).isEqualTo(ConsumeConcurrentlyStatus.RECONSUME_LATER);
         assertThat(consumed(event.eventId())).isZero();
-        reset(notificationMapper);
+        reset(notificationInbox);
         notificationConsumer.consumeMessage(List.of(notificationMessage(event,1)),null);
         notificationConsumer.consumeMessage(List.of(notificationMessage(event,2)),null);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM notifications WHERE receiver_id=?",Long.class,author.id())).isEqualTo(1);
@@ -193,13 +193,13 @@ class ReliableInteractionIntegrationTest extends AbstractVoteIntegrationTest {
     @Test void persistentNotificationFailure_IsQueryableAndCanBeReplayed() throws Exception {
         long postId=createPost(true);
         NotificationEvent event=new NotificationEvent(voter.id(),author.id(),"COMMENT_POST","POST",postId,"[E2E_TEST] 失败通知");
-        doThrow(new IllegalStateException("[E2E_TEST] 持续失败")).when(notificationMapper).insert(any(Notification.class));
+        doThrow(new IllegalStateException("[E2E_TEST] 持续失败")).when(notificationInbox).insertBatch(anyList());
         assertThat(notificationConsumer.consumeMessage(List.of(notificationMessage(event,3)),null)).isEqualTo(ConsumeConcurrentlyStatus.CONSUME_SUCCESS);
         long failureId=jdbcTemplate.queryForObject("SELECT id FROM failed_messages WHERE event_id=?",Long.class,event.eventId());
         assertStatus("/api/admin/mq/failures",HttpMethod.GET,null,voterToken,HttpStatus.FORBIDDEN);
         assertStatus("/api/admin/mq/failures",HttpMethod.GET,null,adminToken,HttpStatus.OK);
         assertStatus("/api/admin/mq/failures/"+failureId+"/replay",HttpMethod.POST,null,adminToken,HttpStatus.CONFLICT);
-        reset(notificationMapper);
+        reset(notificationInbox);
         assertStatus("/api/admin/mq/failures/"+failureId+"/replay",HttpMethod.POST,null,adminToken,HttpStatus.OK);
         assertStatus("/api/admin/mq/failures/"+failureId+"/replay",HttpMethod.POST,null,adminToken,HttpStatus.OK);
         assertThat(consumed(event.eventId())).isEqualTo(1);

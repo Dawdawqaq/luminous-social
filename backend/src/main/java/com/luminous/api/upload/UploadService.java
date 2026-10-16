@@ -24,11 +24,19 @@ public class UploadService {
 
     /** 评论仅允许引用当前用户通过上传接口提交的图片。 */
     public String requireOwnedImage(String url, CurrentUser user) {
+        return requireOwnedImage(url, user, "INVALID_COMMENT_IMAGE", "请重新上传自己的图片后发表评论");
+    }
+
+    public String requireOwnedPostImage(String url, CurrentUser user) {
+        return requireOwnedImage(url, user, "INVALID_POST_IMAGE", "请重新上传自己的图片后发布帖子");
+    }
+
+    private String requireOwnedImage(String url, CurrentUser user, String code, String message) {
         UploadedFile file = files.selectOne(new LambdaQueryWrapper<UploadedFile>().eq(UploadedFile::getUrl, url));
         if (file == null || !java.util.Objects.equals(file.getUserId(), user.id())
                 || file.getContentType() == null
                 || !java.util.Set.of("image/jpeg", "image/png", "image/gif", "image/webp").contains(file.getContentType())) {
-            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_COMMENT_IMAGE", "请重新上传自己的图片后发表评论");
+            throw new BusinessException(HttpStatus.BAD_REQUEST, code, message);
         }
         return file.getUrl();
     }

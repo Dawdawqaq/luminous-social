@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/communities")
@@ -62,14 +63,14 @@ public class CommunityController {
 
     @Operation(summary = "创建社区")
     @PostMapping
-    public ApiResponse<CommunityDtos.CommunityDto> create(@RequestBody CommunityDtos.CreateCommunityRequest request, @AuthenticationPrincipal CurrentUser currentUser) {
+    public ApiResponse<CommunityDtos.CommunityDto> create(@Valid @RequestBody CommunityDtos.CreateCommunityRequest request, @AuthenticationPrincipal CurrentUser currentUser) {
         if (currentUser == null) throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         return ApiResponse.ok(communityService.create(request, currentUser));
     }
 
     @Operation(summary = "更新社区")
     @PutMapping("/{slug}")
-    public ApiResponse<CommunityDtos.CommunityDto> update(@PathVariable String slug, @RequestBody CommunityDtos.UpdateCommunityRequest request, @AuthenticationPrincipal CurrentUser currentUser) {
+    public ApiResponse<CommunityDtos.CommunityDto> update(@PathVariable String slug, @Valid @RequestBody CommunityDtos.UpdateCommunityRequest request, @AuthenticationPrincipal CurrentUser currentUser) {
         if (currentUser == null) throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         return ApiResponse.ok(communityService.update(slug, request, currentUser));
     }

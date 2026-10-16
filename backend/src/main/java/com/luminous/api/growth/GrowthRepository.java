@@ -108,7 +108,7 @@ public class GrowthRepository {
 
     public boolean activeUser(long userId) {
         // 资格采用当前读；不能让外层 RR 旧快照恢复封禁账号的奖励。
-        return jdbc.queryForList("SELECT NOT is_banned FROM users WHERE id=? FOR SHARE", Boolean.class, userId).stream().anyMatch(Boolean.TRUE::equals);
+        return jdbc.queryForList("SELECT (NOT is_banned AND account_type='HUMAN') FROM users WHERE id=? FOR SHARE", Boolean.class, userId).stream().anyMatch(Boolean.TRUE::equals);
     }
 
     public Map<AccountKey, Long> balances(Collection<Long> userIds, Collection<Long> communityIds) {

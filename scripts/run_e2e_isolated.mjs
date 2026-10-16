@@ -136,7 +136,7 @@ async function runTestLifecycle() {
       body: JSON.stringify({
         slug: salonSlug,
         name: `${E2E_PREFIX} 性能工程沙龙 ${timestamp}`,
-        category: '自动化测试',
+        category: 'Living',
         description: `${E2E_PREFIX} 自动化生命周期隔离沙龙`,
       }),
     });
@@ -295,7 +295,7 @@ async function runTestLifecycle() {
 
     console.log('\n======================================================================');
     console.log(`[COMPLETE] 独立测试环境 E2E 执行完毕: ${passed} 通过 / ${failed} 失败`);
-    console.log('[SUCCESS] 测试环境数据清理完成，开发环境 0 污染！');
+    console.log('[CLEANUP] 评论和帖子清理已执行；用户、社区及关联数据由 clean-test-data 脚本清理。');
     console.log('======================================================================\n');
   }
 }

@@ -24,6 +24,12 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CommunityServiceTest {
+    @Test void membershipGateRejectsMissingAndAcceptsPresentRelation() {
+        when(communityMemberMapper.selectOne(any())).thenReturn(null);
+        assertThatThrownBy(() -> communityService.requireMembership(10, 1)).isInstanceOf(BusinessException.class);
+        when(communityMemberMapper.selectOne(any())).thenReturn(new CommunityMember());
+        communityService.requireMembership(10, 1);
+    }
     @org.mockito.Mock private org.springframework.context.ApplicationEventPublisher events;
 
     @Mock

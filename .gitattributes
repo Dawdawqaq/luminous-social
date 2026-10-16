@@ -1,0 +1,2 @@
+# 云部署脚本在 Windows 打包后直接交给 Linux 执行，保持 LF 换行。
+deploy/cloud/*.sh text eol=lf

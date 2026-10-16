@@ -34,6 +34,12 @@ public class VoteCommandService {
         int total = Math.addExact(clock.acceptedTotal(), delta);
         VoteMessage message = new VoteMessage(postId, userId, value, delta, System.currentTimeMillis(), UUID.randomUUID().toString(), version);
         votes.accept(postId, userId, value, version, total);
+        if(value==1 && oldValue!=1) {
+            VoteRepository.NotificationTarget target=votes.notificationTarget(postId);
+            if(target!=null && target.authorId()!=userId)
+                publisher.publishEvent(com.luminous.api.notification.NotificationEvent.interaction(
+                        userId,target.authorId(),"LIKE_POST","POST",postId,target.title(),postId,null));
+        }
         publisher.publishEvent(new com.luminous.api.growth.GrowthEvent.Liked("POST", postId, userId));
         events.insert(new ReliableEventRepository.Event(message.msgId(), "VOTE", postId, userId, version, serialize(message), "PENDING"));
         return new Accepted(message, total);

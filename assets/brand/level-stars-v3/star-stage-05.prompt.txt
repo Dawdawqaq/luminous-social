@@ -1,0 +1,7 @@
+Use case: precise-object-edit
+Asset type: Luminous community level 13–15 transparent icon.
+Input images: Image 1 is the EDIT TARGET, the existing faceted main star. Image 2 is ONLY a reference for the small yellow satellite star at upper-right; do not adopt its main star or its lower-left blue satellite.
+Primary request: Keep the main star from Image 1 unchanged and add exactly ONE small yellow four-point sparkle at its upper-right. Place it near the same location as Image 2's upper-right yellow satellite, separated from the main star, roughly 15% of the main star's width. Match that satellite's thick black outline and tiny pale warm highlight.
+Invariants: Preserve Image 1's exact outer silhouette, position, scale, black outline, all existing gemstone planes, elongated white highlight, yellow body and blue right tip with its soft transition. Do not redraw the facets to match Image 2. Keep square framing and existing generous transparent padding.
+Background: actual transparent alpha, no colored backdrop.
+Avoid: second satellite, blue small star, extra sparkles, glow, text, numbers, badge container, crown, ribbon, watermark. Exactly two objects total: original large star and one small upper-right yellow star.

@@ -9,7 +9,9 @@ public class NotificationDtos {
             TargetDto target,
             String contentPreview,
             boolean isRead,
-            String createdAt
+            String createdAt,
+            long interactionCount,
+            String updatedAt
     ) {}
 
     public record ActorDto(
@@ -33,4 +35,7 @@ public class NotificationDtos {
     public record MarkedCountResponse(
             int markedCount
     ) {}
+
+    public record InboxSlice(java.util.List<NotificationDto> items, String nextCursor, boolean hasNext) {}
+    public record Summary(java.util.Map<String,Long> unread, long unreadCount, String revision) {}
 }

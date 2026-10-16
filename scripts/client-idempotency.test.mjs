@@ -153,3 +153,22 @@ test('点赞、取消、再次点赞属于不同业务操作，不能重放旧�
   await assert.rejects(coordinator.run(fingerprint,async key=>{keys.push(key);throw new Error('超时');},fingerprint,false));
   await coordinator.run(fingerprint,async key=>{assert.equal(key,keys[2]);return 1;},fingerprint,false);
  });
+
+test('关注响应丢失后，确认取消会结束旧意图，再次关注使用新标识', async () => {
+  const storage=memoryStorage();let first;
+  const group='follow-resource',post='c'.repeat(64),remove='d'.repeat(64);
+  await assert.rejects(new OperationCoordinator(storage).run(post,async key=>{first=key;throw new Error('响应丢失');},group,true,true));
+  const restored=new OperationCoordinator(storage);
+  await restored.run(remove,async()=>1,group,true,true);
+  await restored.run(post,async key=>{assert.notEqual(key,first);return 1;},group,true,true);
+});
+
+test('取消明确失败不能结束未确认的关注意图，其他资源也不受清理影响', async () => {
+  const coordinator=new OperationCoordinator(memoryStorage());let first,other;
+  const post='c'.repeat(64),remove='d'.repeat(64),outside='e'.repeat(64);
+  await assert.rejects(coordinator.run(post,async key=>{first=key;throw new Error('响应丢失');},'follow-resource',true,true));
+  await assert.rejects(coordinator.run(outside,async key=>{other=key;throw new Error('响应丢失');},'another-resource',true,true));
+  await assert.rejects(coordinator.run(remove,async()=>{throw Object.assign(new Error('限频'),{status:429});},'follow-resource',true,true));
+  await coordinator.run(post,async key=>{assert.equal(key,first);return 1;},'follow-resource',true,true);
+  await coordinator.run(outside,async key=>{assert.equal(key,other);return 1;},'another-resource',true,true);
+});

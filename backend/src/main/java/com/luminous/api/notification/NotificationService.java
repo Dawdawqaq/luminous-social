@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.Function;
@@ -29,16 +30,17 @@ public class NotificationService {
     private final NotificationMapper notificationMapper;
     private final UserMapper userMapper;
     private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final NotificationInboxRepository inbox;
 
 
     public NotificationService(
             NotificationMapper notificationMapper,
             UserMapper userMapper,
-            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate
+            org.springframework.jdbc.core.JdbcTemplate jdbcTemplate, NotificationInboxRepository inbox
     ) {
         this.notificationMapper = notificationMapper;
         this.userMapper = userMapper;
-        this.jdbcTemplate = jdbcTemplate;
+        this.jdbcTemplate = jdbcTemplate; this.inbox=inbox;
     }
 
     @Transactional
@@ -53,29 +55,44 @@ public class NotificationService {
             return;
         }
 
-        // 事务内锁定接收者并按已提交的通知防抖，失败回滚后不会留下 Redis 拦截标记。
-        jdbcTemplate.queryForList("SELECT id FROM users WHERE id=? FOR UPDATE", Long.class, event.receiverId());
-        if ("LIKE_POST".equals(event.type())) {
-            Long recent = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM notifications WHERE receiver_id=? AND actor_id=? "
-                    + "AND target_type=? AND target_id=? AND type='LIKE_POST' AND created_at>=?", Long.class,
-                    event.receiverId(), event.actorId(), event.targetType(), event.targetId(), LocalDateTime.now().minusMinutes(5));
-            if (recent != null && recent > 0) { return; }
+        inbox.insertBatch(List.of(event));
+    }
+
+    @Transactional
+    public void handleEvents(List<NotificationEvent> events) { inbox.insertBatch(events); }
+
+    public NotificationDtos.Summary summary(CurrentUser user) {
+        requireUser(user);
+        Map<String,Long> counts=inbox.unread(user.id());
+        return new NotificationDtos.Summary(counts,counts.getOrDefault("ALL",0L),inbox.revision(user.id()));
+    }
+
+    public NotificationDtos.InboxSlice slice(String cursor, int size, String type, CurrentUser user) {
+        requireUser(user);
+        if(size<1 || size>50) throw new BusinessException(HttpStatus.BAD_REQUEST,"INVALID_PAGE_SIZE","每次加载数量应为 1 至 50 条");
+        String category=type==null?"ALL":type.toUpperCase(Locale.ROOT);
+        if(!Set.of("ALL","LIKE","COMMENT","FOLLOW","SYSTEM").contains(category))
+            throw new BusinessException(HttpStatus.BAD_REQUEST,"INVALID_TYPE","通知分类无效");
+        long before=Long.MAX_VALUE;
+        LocalDateTime beforeTime=LocalDateTime.of(9999,12,31,23,59,59);
+        if(cursor!=null && !cursor.isBlank()) {
+            try {
+                if(cursor.length()>180) throw new IllegalArgumentException();
+                String[] fields=new String(Base64.getUrlDecoder().decode(cursor),java.nio.charset.StandardCharsets.UTF_8).split("\\|",-1);
+                if(fields.length!=4 || !fields[0].equals(user.id().toString()) || !fields[1].equals(category)) throw new IllegalArgumentException();
+                beforeTime=LocalDateTime.parse(fields[2]); before=Long.parseLong(fields[3]);
+                if(before<=0 || beforeTime.getYear()<1970 || beforeTime.getYear()>9999) throw new IllegalArgumentException();
+            } catch(RuntimeException e) { throw new BusinessException(HttpStatus.BAD_REQUEST,"INVALID_CURSOR","通知分页位置无效，请刷新列表"); }
         }
+        List<Notification> fetched=inbox.slice(user.id(),category,beforeTime,before,size+1);
+        List<Notification> rows=fetched.stream().limit(size).toList();
+        boolean more=fetched.size()>size;
+        String next=more?Base64.getUrlEncoder().withoutPadding().encodeToString((user.id()+"|"+category+"|"+rows.getLast().getUpdatedAt()+"|"+rows.getLast().getId()).getBytes(java.nio.charset.StandardCharsets.UTF_8)):null;
+        return new NotificationDtos.InboxSlice(toDtos(rows),next,more);
+    }
 
-        // 3. 落库持久化
-        Notification notification = new Notification();
-        notification.setId(SnowflakeIdGenerator.getNextId());
-        notification.setReceiverId(event.receiverId());
-        notification.setActorId(event.actorId());
-        notification.setType(event.type());
-        notification.setTargetType(event.targetType());
-        notification.setTargetId(event.targetId());
-        notification.setContentPreview(event.contentPreview());
-        notification.setIsRead(false);
-        notification.setCreatedAt(LocalDateTime.now());
-
-        notificationMapper.insert(notification);
-        log.info("Created notification [id={}, type={}, receiverId={}]", notification.getId(), event.type(), event.receiverId());
+    private void requireUser(CurrentUser user) {
+        if(user==null) throw new BusinessException(HttpStatus.UNAUTHORIZED,"UNAUTHORIZED","请先登录");
     }
 
     public NotificationDtos.UnreadCountResponse getUnreadCount(CurrentUser currentUser) {
@@ -84,7 +101,7 @@ public class NotificationService {
         }
         long count = notificationMapper.selectCount(new LambdaQueryWrapper<Notification>()
                 .eq(Notification::getReceiverId, currentUser.id())
-                .eq(Notification::getIsRead, false));
+                .eq(Notification::getIsRead, false).isNull(Notification::getDeletedAt));
         return new NotificationDtos.UnreadCountResponse(count);
     }
 
@@ -95,13 +112,13 @@ public class NotificationService {
         }
 
         LambdaQueryWrapper<Notification> wrapper = new LambdaQueryWrapper<Notification>()
-                .eq(Notification::getReceiverId, currentUser.id());
+                .eq(Notification::getReceiverId, currentUser.id()).isNull(Notification::getDeletedAt);
 
         // 分类过滤：ALL | LIKE | COMMENT | FOLLOW | SYSTEM
         if (type != null && !type.isBlank() && !type.equalsIgnoreCase("ALL")) {
             String upperType = type.trim().toUpperCase();
             switch (upperType) {
-                case "LIKE" -> wrapper.eq(Notification::getType, "LIKE_POST");
+                case "LIKE" -> wrapper.in(Notification::getType, List.of("LIKE_POST","LIKE_COMMENT"));
                 case "COMMENT" -> wrapper.in(Notification::getType, List.of("COMMENT_POST", "REPLY_COMMENT"));
                 case "FOLLOW" -> wrapper.eq(Notification::getType, "FOLLOW_USER");
                 case "SYSTEM" -> wrapper.eq(Notification::getType, "SYSTEM");
@@ -117,13 +134,21 @@ public class NotificationService {
             return new PageResponse<>(List.of(), notificationPage.getCurrent(), notificationPage.getSize(), notificationPage.getTotal(), false);
         }
 
-        // Batch-Loading: 批量拉取 Actor 用户信息，消除 N+1 查询
+        List<NotificationDtos.NotificationDto> dtos=toDtos(records);
+
+        boolean hasNext = notificationPage.getCurrent() < notificationPage.getPages();
+        return new PageResponse<>(dtos, notificationPage.getCurrent(), notificationPage.getSize(), notificationPage.getTotal(), hasNext);
+    }
+
+    private List<NotificationDtos.NotificationDto> toDtos(List<Notification> records) {
+        if(records.isEmpty()) return List.of();
+        // 批量拉取发起者，消除逐条查询。
         Set<Long> actorIds = records.stream().map(Notification::getActorId).collect(Collectors.toSet());
         Map<Long, User> userMap = actorIds.isEmpty() ? Map.of() :
                 userMapper.selectBatchIds(actorIds).stream()
                         .collect(Collectors.toMap(User::getId, Function.identity(), (a, b) -> a));
 
-        List<NotificationDtos.NotificationDto> dtos = records.stream().map(n -> {
+        return records.stream().map(n -> {
             User actor = userMap.get(n.getActorId());
             NotificationDtos.ActorDto actorDto = actor != null ?
                     new NotificationDtos.ActorDto(String.valueOf(actor.getId()), actor.getUsername(), actor.getDisplayName(), actor.getAvatarUrl()) :
@@ -134,13 +159,14 @@ public class NotificationService {
             String targetUrl;
             if ("USER".equalsIgnoreCase(n.getTargetType())) {
                 targetTitle = actor != null ? actor.getDisplayName() : null;
-                targetUrl = actor != null ? "/user/" + actor.getUsername() : "/user/" + n.getTargetId();
+                targetUrl = actor != null ? "/u/" + actor.getUsername() : "/u/" + n.getTargetId();
             } else if ("COMMUNITY".equalsIgnoreCase(n.getTargetType())) {
                 targetTitle = n.getContentPreview();
                 targetUrl = "/community/" + n.getTargetId();
             } else {
                 targetTitle = n.getContentPreview();
-                targetUrl = "/post/" + n.getTargetId();
+                Long postId=n.getPostId()==null?n.getTargetId():n.getPostId();
+                targetUrl = "/post/" + postId + (n.getCommentId()==null?"":"?comment="+n.getCommentId());
             }
 
             NotificationDtos.TargetDto targetDto = new NotificationDtos.TargetDto(
@@ -151,7 +177,8 @@ public class NotificationService {
             );
 
             String createdAtStr = n.getCreatedAt() != null ?
-                    n.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : "";
+                    n.getCreatedAt().atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME) : "";
+            String updatedAtStr=n.getUpdatedAt()==null?createdAtStr:n.getUpdatedAt().atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
 
             return new NotificationDtos.NotificationDto(
                     String.valueOf(n.getId()),
@@ -160,62 +187,33 @@ public class NotificationService {
                     targetDto,
                     n.getContentPreview(),
                     Boolean.TRUE.equals(n.getIsRead()),
-                    createdAtStr
+                    createdAtStr,
+                    n.getInteractionCount()==null?1:n.getInteractionCount(),
+                    updatedAtStr
             );
         }).toList();
-
-        boolean hasNext = notificationPage.getCurrent() < notificationPage.getPages();
-        return new PageResponse<>(dtos, notificationPage.getCurrent(), notificationPage.getSize(), notificationPage.getTotal(), hasNext);
     }
 
     @Transactional
-    public void markAsRead(Long id, CurrentUser currentUser) {
-        if (currentUser == null) {
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
-        }
-        Notification notification = notificationMapper.selectById(id);
-        if (notification == null) {
-            throw new BusinessException(HttpStatus.NOT_FOUND, "NOT_FOUND", "通知不存在");
-        }
-        if (!notification.getReceiverId().equals(currentUser.id())) {
-            throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "无权操作该通知");
-        }
-        notification.setIsRead(true);
-        notificationMapper.updateById(notification);
-    }
+    public void markAsRead(Long id, CurrentUser user) { markAsRead(id,null,user); }
 
     @Transactional
-    public NotificationDtos.MarkedCountResponse markAllAsRead(CurrentUser currentUser) {
-        if (currentUser == null) {
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
-        }
-        int markedCount = notificationMapper.markAllAsRead(currentUser.id());
-        return new NotificationDtos.MarkedCountResponse(markedCount);
+    public void markAsRead(Long id, Long version, CurrentUser user) {
+        requireOwned(id,user);
+        if(version!=null && version<1) throw new BusinessException(HttpStatus.BAD_REQUEST,"INVALID_VERSION","通知版本无效");
+        inbox.read(id,user.id(),version);
     }
-
     @Transactional
-    public void deleteNotification(Long id, CurrentUser currentUser) {
-        if (currentUser == null) {
-            throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
-        }
-        Notification notification = notificationMapper.selectById(id);
-        if (notification == null) {
-            throw new BusinessException(HttpStatus.NOT_FOUND, "NOT_FOUND", "通知不存在");
-        }
-        if (!notification.getReceiverId().equals(currentUser.id())) {
-            throw new BusinessException(HttpStatus.FORBIDDEN, "FORBIDDEN", "无权删除该通知");
-        }
-        notificationMapper.deleteById(id);
+    public NotificationDtos.MarkedCountResponse markAllAsRead(CurrentUser user) {
+        requireUser(user); return new NotificationDtos.MarkedCountResponse(inbox.readAll(user.id()));
     }
+    @Transactional
+    public void deleteNotification(Long id, CurrentUser user) { requireOwned(id,user); inbox.delete(id,user.id()); }
 
-    private String buildTargetUrl(String targetType, Long targetId) {
-        if (targetType == null || targetId == null) return "/";
-        return switch (targetType.toUpperCase()) {
-            case "POST" -> "/post/" + targetId;
-            case "COMMENT" -> "/post/" + targetId; // 评论通常挂载在帖子下
-            case "USER" -> "/user/" + targetId;
-            case "COMMUNITY" -> "/community/" + targetId;
-            default -> "/";
-        };
+    private void requireOwned(Long id,CurrentUser user) {
+        requireUser(user);
+        Notification n=notificationMapper.selectById(id);
+        if(n==null || n.getDeletedAt()!=null) throw new BusinessException(HttpStatus.NOT_FOUND,"NOT_FOUND","通知不存在");
+        if(!Objects.equals(n.getReceiverId(),user.id())) throw new BusinessException(HttpStatus.FORBIDDEN,"FORBIDDEN","无权操作该通知");
     }
 }

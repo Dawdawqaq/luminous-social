@@ -57,6 +57,8 @@ public class RocketMQConfig {
         DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(consumerGroup);
         consumer.setNamesrvAddr(nameServer);
         consumer.subscribe(notificationTopic, "*");
+        consumer.setConsumeMessageBatchMaxSize(32);
+
         consumer.registerMessageListener(notificationMQConsumer);
         consumer.start();
         log.info("RocketMQ NotificationPushConsumer started and subscribed to [{}]", notificationTopic);

@@ -34,6 +34,30 @@ mybatis-plus:
       id-type: assign_id
 
 app:
+  lumi:
+    enabled: ${LUMI_ENABLED:false}
+    api-key: ${LUMI_API_KEY:}
+    model: ${LUMI_MODEL:deepseek-flash}
+    daily-budget-micros: ${LUMI_DAILY_BUDGET_MICROS:100000}
+    daily-calls: ${LUMI_DAILY_CALLS:100}
+    concurrency: ${LUMI_CONCURRENCY:2}
+    queue-capacity: ${LUMI_QUEUE_CAPACITY:20}
+    cooldown-seconds: ${LUMI_COOLDOWN_SECONDS:60}
+    user-daily: ${LUMI_USER_DAILY:10}
+    user-post-daily: ${LUMI_USER_POST_DAILY:2}
+    post-daily: ${LUMI_POST_DAILY:10}
+    max-input-bytes: ${LUMI_MAX_INPUT_BYTES:16000}
+    max-output-tokens: ${LUMI_MAX_OUTPUT_TOKENS:384}
+    timeout-seconds: ${LUMI_TIMEOUT_SECONDS:25}
+    max-attempts: ${LUMI_MAX_ATTEMPTS:2}
+    input-micros-per-million: ${LUMI_INPUT_MICROS_PER_MILLION:300000}
+    output-micros-per-million: ${LUMI_OUTPUT_MICROS_PER_MILLION:1200000}
+  lumi-chat:
+    user-daily: ${LUMI_CHAT_USER_DAILY:20}
+    cooldown-seconds: ${LUMI_CHAT_COOLDOWN_SECONDS:5}
+    output-tokens: ${LUMI_CHAT_OUTPUT_TOKENS:768}
+    context-turns: ${LUMI_CHAT_CONTEXT_TURNS:6}
+    max-conversations: ${LUMI_CHAT_MAX_CONVERSATIONS:50}
   security:
     trusted-proxies: ${TRUSTED_PROXIES:}
     secure-cookies: ${SECURE_COOKIES:false}

@@ -21,7 +21,7 @@ class NotificationMQProducerTest {
     @Mock private FailedMessageService failures;
     @Test void fallbackSharesDurableEventIdentity() {
         NotificationEvent event = new NotificationEvent(1L,2L,"COMMENT_POST","POST",100L,"[E2E_TEST]");
-        NotificationMQProducer sender = new NotificationMQProducer(producers,transactions,journal,events,failures,new ObjectMapper());
+        NotificationMQProducer sender = new NotificationMQProducer(producers,transactions,journal,events,failures,new ObjectMapper().findAndRegisterModules());
         sender.sendNotification(event);
         var ordered = inOrder(journal,transactions);
         ordered.verify(journal).enqueue(event);
@@ -30,7 +30,7 @@ class NotificationMQProducerTest {
     @Test void sendsDurableEventWhenBrokerAvailable() throws Exception {
         when(producers.getIfAvailable()).thenReturn(producer);
         NotificationEvent event = new NotificationEvent(1L,2L,"COMMENT_POST","POST",100L,"[E2E_TEST]");
-        new NotificationMQProducer(producers,transactions,journal,events,failures,new ObjectMapper()).sendNotification(event);
+        new NotificationMQProducer(producers,transactions,journal,events,failures,new ObjectMapper().findAndRegisterModules()).sendNotification(event);
         verify(journal).enqueue(event);
         verify(producer).send(any(org.apache.rocketmq.common.message.Message.class),any(org.apache.rocketmq.client.producer.SendCallback.class));
     }

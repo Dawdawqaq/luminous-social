@@ -36,6 +36,8 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     }
     @Override protected boolean shouldNotFilter(HttpServletRequest request) {
         return !request.getRequestURI().startsWith("/api/") || request.getRequestURI().startsWith("/api/auth/captcha")
+                // 私有聊天以消息标识和会话状态去重，避免通用响应缓存额外留存已清除的聊天正文。
+                || request.getRequestURI().equals("/api/lumi/chat") || request.getRequestURI().startsWith("/api/lumi/chat/")
                 || !List.of("POST", "PUT", "DELETE", "PATCH").contains(request.getMethod())
                 || request.getHeader("X-Idempotency-Key") == null;
     }

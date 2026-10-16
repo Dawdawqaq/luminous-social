@@ -68,6 +68,7 @@ public class PostService {
     private final GrowthQueryService growthQueries;
     private final UploadService uploadService;
     private final CommentPublicationPolicy commentPublicationPolicy;
+    private final PostPublicationPolicy postPublicationPolicy;
 
     public PostService(
             PostMapper postMapper,
@@ -90,7 +91,8 @@ public class PostService {
             PostReadMetricsService readMetrics,
             GrowthQueryService growthQueries,
             UploadService uploadService,
-            CommentPublicationPolicy commentPublicationPolicy
+            CommentPublicationPolicy commentPublicationPolicy,
+            PostPublicationPolicy postPublicationPolicy
     ) {
         this.postMapper = postMapper;
         this.commentMapper = commentMapper;
@@ -113,6 +115,7 @@ public class PostService {
         this.growthQueries = growthQueries;
         this.uploadService = uploadService;
         this.commentPublicationPolicy = commentPublicationPolicy;
+        this.postPublicationPolicy = postPublicationPolicy;
     }
 
     public PageResponse<PostDtos.PostDto> list(String filter, String communitySlug, String search, long page, long size, CurrentUser currentUser) {
@@ -193,20 +196,28 @@ public class PostService {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "您需要先登录才能发布帖子");
         }
         Community community = communityService.requireBySlug(request.community());
+        communityService.requireMembership(community.getId(), currentUser.id());
+        if (request.title() == null || request.title().isBlank() || request.title().length() > 15
+                || request.content().length() > 1000 || !request.isContentPresent()) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_POST_CONTENT", "标题最多15字符，正文最多1000字符，正文和图片至少填写一项");
+        }
+        String ownedImage = request.image() == null ? null : uploadService.requireOwnedPostImage(request.image(), currentUser);
+        postPublicationPolicy.check(currentUser.id());
         Post post = new Post();
         post.setId(SnowflakeIdGenerator.getNextId());
         post.setAuthorId(currentUser.id());
         post.setCommunityId(community.getId());
         post.setTitle(request.title());
         post.setContent(request.content());
-        post.setImageUrl(request.image());
-        post.setPostType(request.type() != null && !request.type().isBlank() ? request.type() : "DISCUSSION");
+        post.setImageUrl(ownedImage);
+        post.setPostType("DISCUSSION");
         post.setVotes(0);
         post.setCommentsCount(0);
         post.setIsPublic(request.isPublic());
         post.setStatus("NORMAL");
         post.setCreatedAt(LocalDateTime.now());
         postMapper.insert(post);
+        postPublicationPolicy.record(currentUser.id(), post.getId());
         eventPublisher.publishEvent(new GrowthEvent.Created("POST", post.getId()));
 
         userStatsCacheService.incrementPostCount(currentUser.id());
@@ -321,8 +332,8 @@ public class PostService {
             User author = userMap.get(c.getAuthorId());
             PostDtos.AuthorDto authorDto = author != null
                     ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl(),
-                        authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), 0)),
-                        authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), parent.getCommunityId())))
+                        "BOT".equals(author.getAccountType())?null:authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), 0)),
+                        "BOT".equals(author.getAccountType())?null:authorGrowth.get(new GrowthRepository.AccountKey(author.getId(), parent.getCommunityId())),author.getAccountType())
                     : new PostDtos.AuthorDto("unknown", "未知用户", null);
             int uv = finalUserVotes.getOrDefault(c.getId(), 0);
             return new PostDtos.CommentDto(
@@ -382,6 +393,8 @@ public class PostService {
         comment.setVotes(0);
         comment.setCreatedAt(LocalDateTime.now());
         commentMapper.insert(comment);
+        if(com.luminous.api.lumi.LumiIntent.question(comment.getContent())!=null)
+            eventPublisher.publishEvent(new com.luminous.api.lumi.LumiDtos.Requested(comment.getId()));
         eventPublisher.publishEvent(new GrowthEvent.Created("COMMENT", comment.getId()));
 
         postMapper.updateCommentsCountAtomic(postId, 1);
@@ -389,7 +402,7 @@ public class PostService {
 
         // 评论和通知意图同事务提交，提交后由现有可靠事件链路投递，自己评论不通知自己。
         Long receiverId = target == null ? post.getAuthorId() : target.getAuthorId();
-        if (!Objects.equals(receiverId, currentUser.id())) {
+        if (!Objects.equals(receiverId, currentUser.id()) && receiverId != com.luminous.api.lumi.LumiProperties.BOT_ID) {
             String preview = request.content().isBlank() ? "发送了一张图片"
                     : request.content().substring(0, Math.min(request.content().length(), 255));
             eventPublisher.publishEvent(NotificationEvent.interaction(currentUser.id(), receiverId,
@@ -494,16 +507,17 @@ public class PostService {
             comment.setVotes(comment.getVotes() + delta);
         }
 
-        if(value==1 && oldVal!=1 && !Objects.equals(comment.getAuthorId(),currentUser.id())) {
+        if(value==1 && oldVal!=1 && !Objects.equals(comment.getAuthorId(),currentUser.id()) && comment.getAuthorId()!=com.luminous.api.lumi.LumiProperties.BOT_ID) {
             String preview=comment.getContent()==null||comment.getContent().isBlank()?"图片评论":comment.getContent().substring(0,Math.min(255,comment.getContent().length()));
             eventPublisher.publishEvent(NotificationEvent.interaction(currentUser.id(),comment.getAuthorId(),
                     "LIKE_COMMENT","COMMENT",commentId,preview,comment.getPostId(),commentId));
         }
-        eventPublisher.publishEvent(new GrowthEvent.Liked("COMMENT", commentId, currentUser.id()));
+        if(comment.getAuthorId()!=com.luminous.api.lumi.LumiProperties.BOT_ID)
+            eventPublisher.publishEvent(new GrowthEvent.Liked("COMMENT", commentId, currentUser.id()));
         User author = userMapper.selectById(comment.getAuthorId());
         PostDtos.AuthorDto authorDto = author != null
                 ? new PostDtos.AuthorDto(author.getUsername(), author.getDisplayName(), author.getAvatarUrl(),
-                    growthQueries.progress(author.getId(), 0), growthQueries.progress(author.getId(), parent.getCommunityId()))
+                    "BOT".equals(author.getAccountType())?null:growthQueries.progress(author.getId(), 0), "BOT".equals(author.getAccountType())?null:growthQueries.progress(author.getId(), parent.getCommunityId()),author.getAccountType())
                 : new PostDtos.AuthorDto("unknown", "未知用户", null);
 
         return new PostDtos.CommentDto(
@@ -632,7 +646,7 @@ public class PostService {
     private static String nullableId(Long id) { return id == null ? null : String.valueOf(id); }
 
     private static PostDtos.AuthorDto replyAuthor(User user) {
-        return user == null ? null : new PostDtos.AuthorDto(user.getUsername(), user.getDisplayName(), user.getAvatarUrl());
+        return user == null ? null : new PostDtos.AuthorDto(user.getUsername(), user.getDisplayName(), user.getAvatarUrl(),null,null,user.getAccountType());
     }
 
     private Post lockPost(Long id, CurrentUser currentUser) {

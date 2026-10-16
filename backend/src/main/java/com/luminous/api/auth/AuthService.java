@@ -60,6 +60,7 @@ public class AuthService {
 
     @Transactional
     public AuthDtos.AuthResponse register(AuthDtos.RegisterRequest request) {
+        if("lumi".equalsIgnoreCase(request.username())) throw new BusinessException(HttpStatus.CONFLICT,"USERNAME_RESERVED","此用户名为平台助手保留");
         User existing = findByUsername(request.username());
         if (existing != null) {
             throw new BusinessException(HttpStatus.CONFLICT, "USERNAME_EXISTS", "用户名已被占用");
@@ -69,13 +70,13 @@ public class AuthService {
         user.setUsername(request.username());
         user.setDisplayName(request.displayName());
         user.setPasswordHash(passwordEncoder.encode(request.password()));
-        user.setAvatarUrl(null);
-        user.setBannerUrl(null);
+        ProfilePresetCatalog.assign(user, request.avatarPresetId());
         user.setBio(null);
         user.setJoinDate(LocalDate.now().getYear() + "年" + LocalDate.now().getMonthValue() + "月");
 
         // 注册接口始终创建普通用户，管理员只能由受控初始化流程创建。
         user.setRole("USER");
+        user.setAccountType("HUMAN");
 
         user.setIsBanned(false);
         userMapper.insert(user);
@@ -85,7 +86,7 @@ public class AuthService {
 
     public AuthDtos.AuthResponse login(AuthDtos.LoginRequest request) {
         User user = findByUsername(request.username());
-        if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+        if (user == null || "BOT".equals(user.getAccountType()) || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new BusinessException(HttpStatus.UNAUTHORIZED, "BAD_CREDENTIALS", "用户名或密码错误");
         }
         if (Boolean.TRUE.equals(user.getIsBanned())) {
@@ -204,7 +205,8 @@ public class AuthService {
                 isFollowing,
                 user.getRole(),
                 Boolean.TRUE.equals(user.getIsBanned()),
-                growthQueries.progress(user.getId(), 0)
+                "BOT".equals(user.getAccountType()) ? null : growthQueries.progress(user.getId(), 0),
+                user.getAccountType()
         );
     }
 
@@ -217,6 +219,7 @@ public class AuthService {
     public AuthDtos.UserDto follow(String identifier, CurrentUser currentUser, UserIdentifierType identifierType) {
         if (currentUser == null) throw new BusinessException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         User target = findUser(identifier, identifierType);
+        if(target!=null && "BOT".equals(target.getAccountType())) throw new BusinessException(HttpStatus.BAD_REQUEST,"BOT_FOLLOW_UNSUPPORTED","Lumi 是平台助手，不支持关注");
         if (target == null) throw new BusinessException(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "用户不存在");
         if (target.getId().equals(currentUser.id())) throw new BusinessException(HttpStatus.BAD_REQUEST, "CANNOT_FOLLOW_SELF", "不能关注自己");
         
@@ -303,7 +306,8 @@ public class AuthService {
                 isFollowing,
                 user.getRole(),
                 Boolean.TRUE.equals(user.getIsBanned()),
-                growthQueries.progress(user.getId(), 0)
+                "BOT".equals(user.getAccountType()) ? null : growthQueries.progress(user.getId(), 0),
+                user.getAccountType()
         );
     }
 

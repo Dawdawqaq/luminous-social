@@ -130,7 +130,7 @@ class GrowthMySqlIntegrationTest {
         return new CurrentUser(Long.parseLong(response.user().id()), response.user().username(), "USER");
     }
     private long createPost(int community) {
-        return Long.parseLong(posts.create(new PostDtos.CreatePostRequest(slugs.get(community), marker + " 有效帖子" + (++sequence),
+        return Long.parseLong(posts.create(new PostDtos.CreatePostRequest(slugs.get(community), "[E2E_TEST]帖" + (++sequence),
                 marker + " 这是用于验证双维度成长的合规内容", null, null, true), author).id());
     }
     private long seedPost(int community) {
@@ -159,8 +159,9 @@ class GrowthMySqlIntegrationTest {
         assertThat(queries.overview(author.username(), slugs.get(1)).community().level()).isEqualTo(3);
     }
 
-    @Test void joiningWhilePostHoldsCommunityForeignKeyLockCommitsBothTransactions() throws Exception {
-        communities.leave(slugs.get(0), author);
+    @Test void joiningWhileMemberPostHoldsCommunityForeignKeyLockCommitsBothTransactions() throws Exception {
+        // 发帖必须已加入社区；让另一名用户重新加入，保留真实外键锁等待场景。
+        communities.leave(slugs.get(0), peer);
         long communityId = communityIds.get(0);
         CountDownLatch postInserted = new CountDownLatch(1);
         CountDownLatch joiningUpdatesCommunity = new CountDownLatch(1);
@@ -180,7 +181,7 @@ class GrowthMySqlIntegrationTest {
             var posting = executor.submit(() -> createPost(0));
             if (!postInserted.await(10, TimeUnit.SECONDS)) posting.get(1, TimeUnit.SECONDS);
             assertThat(postInserted.getCount()).isZero();
-            var joining = executor.submit(() -> communities.join(slugs.get(0), author));
+            var joining = executor.submit(() -> communities.join(slugs.get(0), peer));
             long postId = posting.get(20, TimeUnit.SECONDS);
             assertThat(joining.get(20, TimeUnit.SECONDS).joined()).isTrue();
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM posts WHERE id=?", Long.class, postId)).isEqualTo(1);
@@ -197,15 +198,17 @@ class GrowthMySqlIntegrationTest {
 
     @Test void concurrentJoinPostAndCheckInMaintainMembershipAndGrowthBalances() throws Exception {
         for (int round = 0; round < 3; round++) {
-            communities.leave(slugs.get(1), author);
+            communities.leave(slugs.get(1), peer);
+            // 推进专库中的发布门槛时间，保留真实限频规则和窗口内成功记录。
+            jdbc.update("UPDATE post_publish_gates SET last_published_at=DATE_SUB(CURRENT_TIMESTAMP(6),INTERVAL 31 SECOND) WHERE user_id=?", author.id());
             CyclicBarrier start = new CyclicBarrier(3);
             int iteration = round;
             var executor = Executors.newFixedThreadPool(3);
             try {
-                var joining = executor.submit(() -> { start.await(10, TimeUnit.SECONDS); return communities.join(slugs.get(1), author); });
+                var joining = executor.submit(() -> { start.await(10, TimeUnit.SECONDS); return communities.join(slugs.get(1), peer); });
                 var posting = executor.submit(() -> {
                     start.await(10, TimeUnit.SECONDS);
-                    return posts.create(new PostDtos.CreatePostRequest(slugs.get(1), marker + " 加入发帖签到并发" + iteration,
+                    return posts.create(new PostDtos.CreatePostRequest(slugs.get(1), "[E2E_TEST]并发" + iteration,
                             marker + " 不同轮次有效发帖内容" + iteration, null, null, true), author);
                 });
                 var checkingIn = executor.submit(() -> { start.await(10, TimeUnit.SECONDS); return checkins.checkIn(slugs.get(0), author); });
@@ -819,7 +822,7 @@ class GrowthMySqlIntegrationTest {
 
     @Test void mutualLikesAndBothAuthorsCheckInDoNotInvertParticipantAndAccountLocks() throws Exception {
         long authorPost = createPost(0);
-        long peerPost = Long.parseLong(posts.create(new PostDtos.CreatePostRequest(slugs.get(1), marker + " 读者自己的公开帖子",
+        long peerPost = Long.parseLong(posts.create(new PostDtos.CreatePostRequest(slugs.get(1), "[E2E_TEST]读者帖",
                 marker + " 用于双向点赞资格锁与签到并发验证", null, null, true), peer).id());
         // 先建立投票时钟、取消来源和签到记录，避免首次插入的间隙锁干扰本次资格锁验证。
         votes.accept(authorPost, peer.id(), 1); votes.accept(authorPost, peer.id(), 0);

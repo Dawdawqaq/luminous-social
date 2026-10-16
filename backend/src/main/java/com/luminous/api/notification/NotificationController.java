@@ -42,10 +42,25 @@ public class NotificationController {
     @PutMapping("/{id}/read")
     public ApiResponse<Void> markAsRead(
             @PathVariable Long id,
+            @RequestParam(required = false) Long version,
             @AuthenticationPrincipal CurrentUser currentUser
     ) {
-        notificationService.markAsRead(id, currentUser);
+        notificationService.markAsRead(id, version, currentUser);
         return ApiResponse.ok(null);
+    }
+
+    @Operation(summary = "按更新时间与编号游标获取收件箱，不统计全量历史")
+    @GetMapping("/inbox")
+    public ApiResponse<NotificationDtos.InboxSlice> inbox(@RequestParam(required=false) String cursor,
+            @RequestParam(defaultValue="20") int size, @RequestParam(defaultValue="ALL") String type,
+            @AuthenticationPrincipal CurrentUser user) {
+        return ApiResponse.ok(notificationService.slice(cursor,size,type,user));
+    }
+
+    @Operation(summary = "获取各分类未读数量")
+    @GetMapping("/summary")
+    public ApiResponse<NotificationDtos.Summary> summary(@AuthenticationPrincipal CurrentUser user) {
+        return ApiResponse.ok(notificationService.summary(user));
     }
 
     @Operation(summary = "一键全部标记已读")

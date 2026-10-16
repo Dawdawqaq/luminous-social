@@ -46,12 +46,12 @@ class VoteMySqlIsolationIntegrationTest {
         transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
         transaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
         transaction.setTimeout(15);
-        jdbc.execute("CREATE TABLE posts(id BIGINT PRIMARY KEY,title VARCHAR(100)) ENGINE=InnoDB");
+        jdbc.execute("CREATE TABLE posts(id BIGINT PRIMARY KEY,title VARCHAR(100),author_id BIGINT DEFAULT 1) ENGINE=InnoDB");
         jdbc.execute("CREATE TABLE post_votes(post_id BIGINT,user_id BIGINT,value INT) ENGINE=InnoDB");
         jdbc.execute("CREATE TABLE post_vote_clocks(post_id BIGINT PRIMARY KEY,accepted_version BIGINT,accepted_total INT,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
         jdbc.execute("CREATE TABLE vote_states(post_id BIGINT,user_id BIGINT,desired_value INT,accepted_version BIGINT,applied_value INT,applied_version BIGINT,PRIMARY KEY(post_id,user_id)) ENGINE=InnoDB");
         jdbc.execute("CREATE TABLE reliable_events(event_id VARCHAR(96) PRIMARY KEY,event_type VARCHAR(24),post_id BIGINT,user_id BIGINT,business_version BIGINT,payload TEXT,status VARCHAR(16)) ENGINE=InnoDB");
-        jdbc.update("INSERT INTO posts VALUES(1,'[E2E_TEST] 旧快照投票回归')");
+        jdbc.update("INSERT INTO posts(id,title) VALUES(1,'[E2E_TEST] 旧快照投票回归')");
         jdbc.update("INSERT INTO post_vote_clocks(post_id,accepted_version,accepted_total) VALUES(1,0,0)");
         jdbc.update("INSERT INTO vote_states VALUES(1,1,0,0,0,0),(1,2,0,0,0,0)");
         votes = new VoteRepository(jdbc);

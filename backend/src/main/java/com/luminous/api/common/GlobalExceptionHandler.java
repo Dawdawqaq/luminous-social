@@ -13,12 +13,22 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.luminous.api.post.PostRateLimitException.class)
+    public ResponseEntity<ApiResponse<Void>> handlePostRateLimit(com.luminous.api.post.PostRateLimitException ex) {
+        return ResponseEntity.status(ex.getStatus()).header("Retry-After", String.valueOf(ex.getRetryAfterSeconds()))
+                .body(ApiResponse.fail(ex.getCode(), ex.getMessage()));
+    }
     @ExceptionHandler(com.luminous.api.auth.FollowRateLimitException.class)
     public ResponseEntity<ApiResponse<Void>> handleFollowRateLimit(com.luminous.api.auth.FollowRateLimitException ex) {
         return ResponseEntity.status(ex.getStatus()).header("Retry-After",String.valueOf(ex.getRetryAfterSeconds()))
                 .body(ApiResponse.fail(ex.getCode(),ex.getMessage()));
     }
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /** 浏览器主动关闭流连接后响应已不可写，不再回写错误 JSON 或误报服务器故障。 */
+    @ExceptionHandler(org.springframework.web.context.request.async.AsyncRequestNotUsableException.class)
+    public void handleClosedAsyncResponse(org.springframework.web.context.request.async.AsyncRequestNotUsableException ex) {
+    }
 
     @ExceptionHandler(com.luminous.api.post.CommentRateLimitException.class)
     public ResponseEntity<ApiResponse<Void>> handleCommentRateLimit(com.luminous.api.post.CommentRateLimitException ex) {

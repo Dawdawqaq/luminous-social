@@ -1,96 +1,139 @@
-import React, { useEffect } from 'react';
-import { X } from 'lucide-react';
-import { cn } from '../../utils';
-
+import React, { useEffect, useId, useRef } from "react";
+import { createPortal } from "react-dom";
+import { X } from "lucide-react";
+import { cn } from "../../utils";
 export interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: string;
   subtitle?: string;
   children: React.ReactNode;
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  maxWidth?: "sm" | "md" | "lg" | "xl" | "2xl";
+  dismissible?: boolean;
+  initialFocusRef?: React.RefObject<HTMLElement>;
+  role?: "dialog" | "alertdialog";
+  describedBy?: string;
+  placement?: "center" | "drawer";
 }
-
 export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
   title,
   subtitle,
   children,
-  maxWidth = 'md',
+  maxWidth = "md",
+  dismissible = true,
+  initialFocusRef,
+  role = "dialog",
+  describedBy,
+  placement = "center",
 }) => {
+  const titleId = useId();
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = dismissible ? onClose : () => {};
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    if (!isOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () =>
+      Array.from(
+        modalRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]),a[href],input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex="0"]',
+        ) || [],
+      ).filter((el) => el.getClientRects().length > 0);
+    const frame = requestAnimationFrame(() => {
+      (initialFocusRef?.current || focusable()[0] || modalRef.current)?.focus();
+    });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        closeRef.current();
+      }
+      if (event.key === "Tab") {
+        const items = focusable();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first) {
+          event.preventDefault();
+          modalRef.current?.focus();
+        } else if (
+          event.shiftKey &&
+          (document.activeElement === first ||
+            document.activeElement === modalRef.current)
+        ) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
     };
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-      window.addEventListener('keydown', handleKeyDown);
-    }
+    document.addEventListener("keydown", onKey, true);
     return () => {
-      document.body.style.overflow = '';
-      window.removeEventListener('keydown', handleKeyDown);
+      cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKey, true);
+      previous?.focus();
     };
-  }, [isOpen, onClose]);
-
+  }, [isOpen]);
   if (!isOpen) return null;
-
-  const maxWidths = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-2xl',
-    '2xl': 'max-w-4xl',
+  const widths = {
+    sm: "max-w-sm",
+    md: "max-w-md",
+    lg: "max-w-lg",
+    xl: "max-w-2xl",
+    "2xl": "max-w-4xl",
   };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      {/* Quiet Backdrop */}
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="fixed inset-0 bg-ink-dark/40 dark:bg-black/60 backdrop-blur-[2px] transition-opacity animate-in fade-in"
-        onClick={onClose}
+        className="absolute inset-0 bg-black/50"
+        onClick={() => closeRef.current()}
+        aria-hidden="true"
       />
-
-      {/* Modal Card */}
       <div
+        ref={modalRef}
+        role={role}
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : "操作窗口"}
+        aria-describedby={describedBy}
+        tabIndex={-1}
         className={cn(
-          'relative w-full bg-paper-50 dark:bg-night-surface border border-paper-300 dark:border-night-border border-t-2 border-t-terracotta dark:border-t-terracotta-dark rounded-[2px] shadow-lifted z-10 my-8 overflow-hidden animate-in zoom-in-95 duration-150',
-          maxWidths[maxWidth]
+          "panel relative z-10 w-full max-h-[calc(100dvh-32px)] overflow-y-auto",
+          widths[maxWidth],
+          placement === "drawer" && "lumi-conversations-drawer",
         )}
       >
-        {/* Subtle Decorative Background Arches */}
-        <div className="absolute top-0 right-0 w-48 h-48 pointer-events-none overflow-hidden opacity-[0.07] dark:opacity-[0.12] -mr-8 -mt-8" aria-hidden="true">
-          <svg viewBox="0 0 200 200" fill="none" className="w-full h-full text-terracotta dark:text-terracotta-dark">
-            <circle cx="160" cy="40" r="50" stroke="currentColor" strokeWidth="1" strokeDasharray="3 3" />
-            <circle cx="160" cy="40" r="90" stroke="currentColor" strokeWidth="1" />
-            <circle cx="160" cy="40" r="130" stroke="currentColor" strokeWidth="1" strokeDasharray="4 6" />
-            <line x1="160" y1="40" x2="30" y2="40" stroke="currentColor" strokeWidth="1" strokeDasharray="2 4" />
-            <line x1="160" y1="40" x2="60" y2="140" stroke="currentColor" strokeWidth="1" />
-          </svg>
-        </div>
-
-        <div className="relative flex items-start justify-between p-5 hairline-b">
+        <div className="flex items-start justify-between gap-3 p-5 hairline-b">
           <div>
             {title && (
-              <h3 className="font-serif text-xl font-medium text-ink-primary dark:text-night-ink tracking-tight">
+              <h2 id={titleId} className="text-xl font-extrabold">
                 {title}
-              </h3>
+              </h2>
             )}
             {subtitle && (
-              <p className="text-xs text-ink-muted dark:text-night-muted font-sans mt-0.5">
+              <p className="mt-1 text-sm text-ink-muted dark:text-night-muted">
                 {subtitle}
               </p>
             )}
           </div>
           <button
-            onClick={onClose}
-            className="text-ink-subtle hover:text-ink-primary dark:text-night-subtle dark:hover:text-night-ink p-1 rounded transition-colors -mr-1 -mt-1 cursor-pointer"
+            type="button"
+            aria-label="关闭窗口"
+            onClick={() => closeRef.current()}
+            disabled={!dismissible}
+            className="icon-button -mr-2 -mt-2"
           >
-            <X className="w-4 h-4" />
+            <X size={22} />
           </button>
         </div>
-        <div className="relative p-6">{children}</div>
+        <div className="p-5 sm:p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

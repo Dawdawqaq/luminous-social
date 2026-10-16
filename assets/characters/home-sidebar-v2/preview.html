@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Luminous 猫猫 · 首页与侧栏原型重制</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px; background: #f3f4f6; color: #1a1a1a; font-family: "Microsoft YaHei", sans-serif; }
+    main { max-width: 1200px; margin: auto; }
+    header { display: flex; align-items: center; gap: 20px; margin-bottom: 20px; }
+    header img { width: 74px; height: 94px; object-fit: contain; background: white; border: 1px solid #d1d5db; border-radius: 6px; }
+    h1 { margin: 0 0 10px; font-size: 27px; }
+    header p { margin: 0; font-size: 14px; color: #526071; }
+    .gallery { display: grid; grid-template-columns: 310px 1fr; gap: 22px; }
+    article { min-width: 0; padding: 20px; background: white; border: 2px solid #1a1a1a; border-radius: 6px; }
+    h2 { margin: 0 0 24px; font-size: 18px; }
+    .sidebar-stage { position: relative; height: 350px; }
+    .bubble { position: relative; z-index: 1; width: 250px; margin: 8px auto 0; padding: 18px 8px; text-align: center; font-weight: 800; font-size: 18px; line-height: 1.4; background: white; border: 2px solid #1a1a1a; border-radius: 15px; box-shadow: 3px 3px 0 #1a1a1a; transform: rotate(-5deg); }
+    .dots { position: absolute; inset: 74px 0 0; background-image: radial-gradient(#2563eb33 1px, transparent 1.2px); background-size: 8px 8px; }
+    .sidebar-cat { position: absolute; width: 266px; height: 300px; object-fit: contain; left: 0; bottom: -2px; }
+    .join { display: block; padding: 12px; margin-top: 12px; border: 2px solid #1a1a1a; border-radius: 5px; background: #fde047; text-align: center; font-weight: 700; box-shadow: 3px 3px 0 #1a1a1a; }
+    .hero-stage { position: relative; height: 350px; margin-right: 6px; }
+    .hero-paper { position: absolute; width: calc(100% - 40px); height: 300px; border-radius: 6px; background: white; overflow: hidden; }
+    .hero-paper::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(#2563eb22 1px, transparent 1.2px); background-size: 8px 8px; }
+    .hero-paper::after { content: ""; position: absolute; inset: 0; background: #fde047; clip-path: polygon(28% 88%, 100% 32%, 100% 100%, 32% 100%); }
+    .copy { position: absolute; z-index: 2; left: 24px; top: 32px; }
+    .headline { margin: 0 0 16px; font-size: 45px; font-weight: 900; line-height: 1.27; letter-spacing: -2px; }
+    .headline span { color: #2563eb; }
+    .copy p { font-size: 14px; color: #526071; margin: 0 0 28px; }
+    .actions { display: flex; gap: 12px; }
+    .actions span { padding: 10px 14px; font-weight: 700; border: 2px solid #1a1a1a; border-radius: 5px; background: white; box-shadow: 3px 3px 0 #1a1a1a; font-size: 14px; }
+    .actions .primary { background: #2563eb; color: white; }
+    .hero-cat { position: absolute; width: 430px; height: 215px; right: -38px; top: 121px; z-index: 1; }
+    .hero-cat.body { clip-path: inset(0 0 17% 0); }
+    .frame { position: absolute; z-index: 2; width: calc(100% - 40px); height: 300px; border: 2px solid #1a1a1a; border-radius: 6px; box-shadow: 4px 4px 0 #1a1a1a; }
+    .hero-cat.paw { z-index: 3; clip-path: inset(74% 69% 0 16%); }
+    .hero-cat.reach { z-index: 3; clip-path: inset(20% 0 16% 66%); }
+    .caption { margin: 24px 0 0; font-size: 14px; line-height: 1.8; color: #526071; }
+    .note { margin-top: 22px; font-size: 13px; color: #526071; }
+  </style>
+</head>
+<body>
+<main>
+  <header><img src="../luminous-cat-master.png" alt="正式原型对照"><div><h1>Luminous 猫猫 · 首页与侧栏</h1><p>沿用正式原型的脸型与五官、小爪子，以及黑边黄蓝渐变星星。</p></div></header>
+  <div class="gallery">
+    <article><h2>侧栏 · 举星星打招呼</h2><div class="sidebar-stage"><div class="dots"></div><div class="bubble">和有趣的人<br>一起分享生活吧！</div><img class="sidebar-cat" src="luminous-cat-sidebar-v2.png" alt="原型猫猫举星星打招呼"></div><span class="join">加入 Luminous</span><p class="caption">保留现有侧栏的欢迎动作。<br>换回原型笑眼，身体和手臂更纤细。</p></article>
+    <article><h2>首页 · 探头伸出边框</h2><div class="hero-stage"><div class="hero-paper"></div><div class="copy"><div class="headline">找到同好，<br>聊点<span>喜欢的。</span></div><p>分享你的日常、问题和新发现。</p><div class="actions"><span class="primary">分享新发现</span><span>发现社区</span></div></div><img class="hero-cat body" src="luminous-cat-welcome-v2.png" alt="原型猫猫探头"><div class="frame"></div><img class="hero-cat paw" src="luminous-cat-welcome-v2.png" alt="" aria-hidden="true"><img class="hero-cat reach" src="luminous-cat-welcome-v2.png" alt="" aria-hidden="true"></div><p class="caption">小爪搭住下边框，另一只举星星伸出右侧。<br>头部留在框内，身体隐藏，保留你想要的探头感觉。</p></article>
+  </div>
+  <p class="note">图片待确认。本文件仅展示拟放置效果，实际页面尚未替换。</p>
+</main>
+</body>
+</html>

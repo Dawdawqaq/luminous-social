@@ -15,6 +15,7 @@ public class User {
     private String bio;
     private String joinDate;
     private String role;       // USER | ADMIN
+    private String accountType;
     private Boolean isBanned;  // 0=正常 1=封禁
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -22,6 +23,8 @@ public class User {
     public Long getId() {
         return id;
     }
+    public String getAccountType() { return accountType; }
+    public void setAccountType(String accountType) { this.accountType=accountType; }
 
     public void setId(Long id) {
         this.id = id;

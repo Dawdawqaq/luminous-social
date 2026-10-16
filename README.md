@@ -51,6 +51,10 @@ Luminous 是 Java 21 / Spring Boot 3.5.0 与 React 18 / TypeScript / Vite 6 构�
 
 ## 独立 Docker 开发环境
 
+真实云服务器的单节点部署准备见 [deploy/cloud/README.md](deploy/cloud/README.md)。该配置面向小内存服务器，保留 RocketMQ，由宿主机 Nginx 托管前端和 HTTPS，使用独立 `luminous-cloud` 项目及持久卷；不能直接复用下面的开发配置或双节点生产模拟配置。
+
+2026-10-07 已完成首次云部署，启动和只读页面检查结果、资源快照及管理命令见 [deploy/cloud/DEPLOYMENT.md](deploy/cloud/DEPLOYMENT.md)。
+
 需要 Docker Engine 和 Compose **2.24.4+**。基础编排启动独立 MySQL、Redis、MinIO、MQ、后端和前端；模板默认关闭应用 MQ 投递以便本机调试，本地消费仍走同一数据库事务入口。以下命令在仓库根目录运行，不操作其他 Compose 项目。
 
 1. 复制独立开发模板。用途是明确端口、私有存储凭据和浏览器公开地址，不覆盖已有 `.env`。
@@ -215,4 +219,23 @@ npm run build
 | `frontend/src/context/NotificationContext.tsx` | 共享未读计数与可见页面轮询 |
 | `frontend/src/notification/UnreadCounter.ts` | 合并查询、隔离用户和拒绝过期结果 |
 
-本项目采用 [MIT License](LICENSE)。
+## 新版前端
+
+漫画波普风新版已接管 `frontend`，旧版源码已移除。Docker、部署打包和本地构建统一使用这个目录，开发前端端口为 3000，后端为 8080。
+
+```powershell
+npm --prefix frontend ci --cache .local/npm-cache-v2
+npm --prefix frontend run dev
+```
+
+Docker 前端运行时，切换到本地热更新需要先停止开发前端容器以释放 3000；操作步骤见前端说明。
+
+本地开发代理和 Docker Nginx 均接入现有后端。成长后端已实现双维度经验、等级计算、奖励账本、每日限额与违规扣回，页面使用真实等级数据；参考参数只用于开发验收，生产奖励默认关闭，普通浏览不奖励。实现与契约见 [成长系统说明](doc/20_用户成长等级系统实现与验收.md)。启动、资源来源与真实联调记录见 [前端说明](frontend/README.md) 与 `doc/18_新版前端接管与真实联调验收.md`。此前模拟接口验收记录保留在 `doc/17_前端重制与验收说明.md`。
+
+## 数据库升级注意
+
+正式版本使用 V23 补齐关注分页索引；旧本地 V13 草案不再作为发布迁移，已执行该草案的开发库需要先核对迁移历史。
+
+Lumi 使用独立内部用户名 `lumi.bot`，展示名为 Lumi，不覆盖既有普通 Lumi/lumi 账号。本轮 V28 在首次提交前修订；已经执行旧 V28 草案的开发库，直接更新源码会被 Flyway 默认校验拒绝。升级前应先备份，核对全部已应用脚本、校验值及实际表结构，确认只有已知草案差异后再受控恢复迁移记录并执行后续迁移。V32 仅调整固定 BOT 账号的内部用户名。不要关闭校验或在应用启动时自动 repair；存在未知残留、其他校验差异或已经正式发布的基线时，须另行制定兼容升级方案。代码提交及构建通过不代表现有数据库已经升级。
+
+本项目采用 [MIT License](LICENSE)。第三方字体保留各自许可，见 `frontend/public/fonts`。

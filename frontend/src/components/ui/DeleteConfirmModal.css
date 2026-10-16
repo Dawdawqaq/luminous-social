@@ -1,0 +1,66 @@
+.delete-confirm-copy {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.delete-confirm-cat {
+  display: block;
+  flex: none;
+  width: 104px;
+  height: 122px;
+  object-fit: contain;
+  user-select: none;
+}
+
+.delete-confirm-description {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.delete-confirm-preview {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.delete-confirm-error {
+  margin: 18px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #dc2626;
+  border-radius: 5px;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.dark .delete-confirm-error {
+  border-color: #fca5a5;
+  color: #fca5a5;
+}
+
+.delete-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.ink-button.delete-confirm-submit {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+@media (max-width: 550px) {
+  .delete-confirm-copy { gap: 16px; }
+  .delete-confirm-cat { width: 80px; height: 94px; }
+}

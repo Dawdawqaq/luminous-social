@@ -273,8 +273,26 @@ ALTER TABLE uploaded_files ADD COLUMN storage_type VARCHAR(16);
 ALTER TABLE uploaded_files ADD COLUMN read_token_hash CHAR(64);
 CREATE INDEX idx_uploaded_stored_name ON uploaded_files(stored_name);
 
+-- 通知收件箱测试结构与正式迁移字段保持一致。
+ALTER TABLE notifications ADD COLUMN read_at DATETIME(6);
+ALTER TABLE notifications ADD COLUMN deleted_at DATETIME(6);
+ALTER TABLE notifications ADD COLUMN updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6);
+ALTER TABLE notifications ADD COLUMN interaction_count BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE notifications ADD COLUMN read_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE notifications ADD COLUMN aggregate_key VARCHAR(140);
+ALTER TABLE notifications ADD COLUMN post_id BIGINT;
+ALTER TABLE notifications ADD COLUMN comment_id BIGINT;
+CREATE UNIQUE INDEX uk_notification_aggregate ON notifications(aggregate_key);
+CREATE TABLE notification_like_receipts (
+    receiver_id BIGINT NOT NULL,type VARCHAR(32) NOT NULL,target_id BIGINT NOT NULL,
+    actor_id BIGINT NOT NULL,bucket_date DATE NOT NULL,PRIMARY KEY(receiver_id,type,target_id,bucket_date,actor_id)
+);
+
 -- 关注的事务额度与通知窗口，供既有集成测试使用。
 CREATE TABLE follow_action_gates(user_id BIGINT PRIMARY KEY,last_changed_at DATETIME(6),recent_change_times VARCHAR(2048) NOT NULL DEFAULT '',FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE TABLE follow_actions(id BIGINT PRIMARY KEY,user_id BIGINT NOT NULL,target_id BIGINT NOT NULL,is_following BOOLEAN NOT NULL,changed_at DATETIME(6) NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE);
 CREATE INDEX idx_follow_action_window ON follow_actions(user_id,changed_at);
 CREATE TABLE follow_notification_windows(actor_id BIGINT NOT NULL,receiver_id BIGINT NOT NULL,last_event_at DATETIME(6),PRIMARY KEY(actor_id,receiver_id),FOREIGN KEY(actor_id) REFERENCES users(id) ON DELETE CASCADE);
+
+-- 机器人身份不拥有登录与成长资格。
+ALTER TABLE users ADD COLUMN account_type VARCHAR(16) NOT NULL DEFAULT 'HUMAN';

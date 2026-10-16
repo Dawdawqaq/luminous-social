@@ -11,6 +11,9 @@ CLAUDE.md
 GEMINI.md
 _Run_*.java
 _Run_*.class
+# 本地测试产物、审查截图和设计工具缓存不发布到源码仓库。
+/output/
+.impeccable/
 
 # --- [敏感环境配置与密钥 (保留 .env.example 模板)] ---
 .env
@@ -25,6 +28,7 @@ frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/coverage/
+output/playwright/
 frontend/.env.local
 frontend/.env.development.local
 frontend/.env.test.local

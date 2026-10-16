@@ -1,0 +1,9 @@
+生成方式：内置 image_gen 工具
+页面：发现社区
+动作：张望
+拟放位置：页头右侧，和创建按钮留开距离
+正式原型：assets/characters/luminous-cat-master.png
+状态：待用户确认图片，不嵌入页面。
+提示词：
+Use case: identity-preserve / precise-object-edit. Image 1 is the AUTHORITATIVE and USER-APPROVED Luminous cat master. This is a precise POSE VARIANT, not a new character design. Preserve the exact master head silhouette, integrated triangular ears with low curved forehead between them, wide rounded cheeks, original closed happy eyes, tiny nose, double-curve smile, pink oval blush, whiskers, black outline thickness and small blue viewer-left / yellow viewer-right inner ear patches with white margins. Preserve the master's NARROW gently rectangular torso, THIN arms, TINY forepaws and two TINY hind feet that are small extensions of the body's lower corners. The head, torso and limbs must not become swollen, rounder or wider. Keep BOTH tiny hind feet in the same standing position as the master: NO sitting, NO large rounded haunches, NO large circular/oval hind paws, NO oversized soles, NO thick arms, NO extra limbs. The cat has exactly two arms with two tiny front paws and two tiny feet. Change ONLY the indicated pose of arms and head. The complete full-body silhouette is isolated, nearly front view, no cropped limbs or ears, modest transparent margin. Flat white body and near-black outlines, limited pink cheek blush and tiny blue/yellow ear inserts. No visible tail, clothing, accessories, background, text, frame, shadow, aura, lighting or realistic texture. Preserve TRUE ALPHA TRANSPARENCY outside the character. When there is a prop, keep it modest so the BODY and both tiny feet remain visible, and do not increase the paw size to hold it.
+Requested pose: Raise ONE thin arm so its tiny front paw rests above its eye like a small visor, looking into the distance with a slight curious turn of the head. The other thin arm hangs naturally beside the torso. Retain the familiar closed happy eyes. No props.
