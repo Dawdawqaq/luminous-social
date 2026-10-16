@@ -118,6 +118,10 @@ services:
 
   backend:
     image: luminous-cloud-backend:latest
+    # AI 密钥单独保存在云端私有文件，不进入源码或部署归档。
+    env_file:
+      - path: .env.lumi.local
+        required: false
     build:
       context: ./backend
       dockerfile: Dockerfile

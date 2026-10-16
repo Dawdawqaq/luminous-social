@@ -2,7 +2,7 @@
 
 目标服务器：Ubuntu 22.04、x86_64、2 个逻辑 CPU、1.6GiB 内存、2GiB Swap、公网 IP `8.137.79.129`。本目录提供独立 `luminous-cloud` 编排，不能与仓库的开发或双节点生产模拟配置合并使用。
 
-当前域名为 `myluminous.xyz`，尚未备案，网站与云容器已停止。以下启动及重载命令用于后续获准恢复服务时；添加 DNS 或准备配置不需要启动服务。
+当前域名为 `myluminous.xyz`。2026-10-16 用户已确认备案完成并授权恢复部署；启动前仍需核对 DNS 和覆盖主域名及 www 的受信任证书。此前停站经过见首次部署历史记录，不能把旧停站快照当作当前状态。
 
 在阿里云云解析 DNS 中为 `myluminous.xyz` 添加两条默认线路 A 记录：主机记录 `@` 和 `www`，记录值均为 `8.137.79.129`，TTL 可用默认值。PowerShell 执行 `Resolve-DnsName myluminous.xyz -Type A` 和 `Resolve-DnsName www.myluminous.xyz -Type A`，核对结果为服务器 IP。若无结果，核对实名认证、域名状态、记录值及 DNS 缓存。
 
@@ -76,6 +76,20 @@ docker compose -p luminous-cloud --env-file .env.cloud.local -f compose.yml conf
 ```
 
 校验归档 SHA256 与开发机器的输出一致。密钥在服务器生成，环境文件权限为 `600`；初始化脚本不会覆盖已有密钥。需要初始管理员时，用编辑器填写 `.env.cloud.local` 的 `BOOTSTRAP_ADMIN_USERNAME/PASSWORD`；首次管理员创建成功后清空这两项，再重建后端。不要在日志、截图或聊天中展示环境文件内容。
+
+### Lumi 私有运行配置
+
+后端可选读取 `/opt/luminous/.env.lumi.local`。未提供该文件时 AI 默认关闭；配置只在服务器保存，不进入部署包、源码或前端环境。更新前先备份已有配置，不重新生成数据库或 JWT 密钥。
+
+```bash
+cd /opt/luminous
+umask 077
+touch .env.lumi.local
+chmod 600 .env.lumi.local
+vi .env.lumi.local
+```
+
+在编辑器中填写 `LUMI_ENABLED`、`LUMI_API_KEY`、`LUMI_MODEL` 和 `LUMI_DAILY_BUDGET_MICROS`，然后重建后端容器加载。当前应用默认每日预算为 100000 微美元（0.10 美元）；密钥通过受控渠道录入，禁止复制到公开模板或终端输出。配置文件的可选读取与应用层预算校验分别生效；启动检查不需要付费调用模型。
 
 ## 4. 构建运行时镜像并分阶段启动
 
