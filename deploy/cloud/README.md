@@ -8,7 +8,7 @@
 
 Nginx 模板以 `https://myluminous.xyz` 为主入口，HTTP 和 HTTPS 的 `www` 入口跳转主域名。后端 `APP_PUBLIC_BASE_URL`、CORS 和文件公共地址统一使用主域名。已有环境文件不会被 `init-env.sh` 覆盖，更新时只修改其 `APP_PUBLIC_BASE_URL`，保留全部密钥。配置文件修改后，后端需在恢复服务时通过 Compose 重建容器才能使用新环境值。
 
-正式开放前需完成备案，并将证书替换为同时覆盖 `myluminous.xyz` 与 `www.myluminous.xyz` 的受信任证书；当前自签名证书仅供配置语法校验，不能视为域名 HTTPS 已就绪。
+2026-10-16 已恢复公网部署，证书已替换为同时覆盖 `myluminous.xyz` 与 `www.myluminous.xyz` 的 Let's Encrypt 证书，并配置自动续期。当前结果及历史停站记录见 [DEPLOYMENT.md](DEPLOYMENT.md)。其他环境仍需独立完成备案、证书及 DNS 核验。
 
 ## 拓扑与容量边界
 
@@ -148,13 +148,13 @@ fi
 systemctl reload nginx
 ```
 
-模板使用已有自签名证书，访问 `https://myluminous.xyz` 会提示证书不受信任或名称不匹配；公开上线前应更换为覆盖主域名与 www 的受信任证书并配置自动续期。前端深层路由回退 `index.html`，不存在的静态资源返回 404，API 路径不会被改写成前端页面。入口代理覆盖客户端提交的 `X-Forwarded-For`，后端只信任 Docker 桥接网关。访问日志省略查询字符串和 Referer，避免文件能力令牌被记录。
+模板读取 `/etc/nginx/ssl/server.crt` 和 `/etc/nginx/ssl/server.key`。当前云服务器这两个路径指向 Let's Encrypt 的完整证书链和私钥；其他环境也需提供覆盖主域名与 www 的受信任证书并配置自动续期。前端深层路由回退 `index.html`，不存在的静态资源返回 404，API 路径不会被改写成前端页面。入口代理覆盖客户端提交的 `X-Forwarded-For`，后端只信任 Docker 桥接网关。访问日志省略查询字符串和 Referer，避免文件能力令牌被记录。
 
 ## 6. 检查运行与手动验收
 
 ```bash
-curl --fail --silent --show-error -k --resolve myluminous.xyz:443:127.0.0.1 https://myluminous.xyz/ -o /dev/null
-curl --fail --silent --show-error -k --resolve myluminous.xyz:443:127.0.0.1 https://myluminous.xyz/api/posts
+curl --fail --silent --show-error --resolve myluminous.xyz:443:127.0.0.1 https://myluminous.xyz/ -o /dev/null
+curl --fail --silent --show-error --resolve myluminous.xyz:443:127.0.0.1 https://myluminous.xyz/api/posts
 docker compose -p luminous-cloud --env-file .env.cloud.local -f compose.yml ps
 docker stats --no-stream
 free -h
@@ -162,7 +162,7 @@ vmstat 1 10
 docker compose -p luminous-cloud --env-file .env.cloud.local -f compose.yml exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli INFO memory'
 ```
 
-`-k` 仅用于服务器内部诊断自签名证书，不能把这些请求描述为可信 HTTPS 验证。Swap 有占用并不代表问题；关注 `vmstat` 首次汇总样本之后是否持续换入换出、请求延迟和容器是否因 OOM 重启。确认公网浏览器可访问，再手动检查验证码、注册登录、发帖、投票切换、通知和文件上传读取。云环境不运行 E2E、压测或自动写入测试套件；自动化业务验收仍使用独立开发环境。
+上述命令保留证书校验；证书过期、链不完整或域名不匹配时应先修复证书。Swap 有占用并不代表问题；关注 `vmstat` 首次汇总样本之后是否持续换入换出、请求延迟和容器是否因 OOM 重启。确认公网浏览器可访问，再手动检查验证码、注册登录、发帖、投票切换、通知和文件上传读取。云环境不运行 E2E、压测或自动写入测试套件；自动化业务验收仍使用独立开发环境。
 
 ## 7. 停止、备份与更新
 
